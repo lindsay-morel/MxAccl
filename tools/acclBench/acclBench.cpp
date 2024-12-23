@@ -4,10 +4,14 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdbool.h>
-#include <getopt.h> /* getopt_long() */
-#include <unistd.h>
+#include <sstream>
+#ifdef __linux__
+#include<getopt.h>
+#else
+#include "windows/getopt.h"
+#endif
+#include <stdint.h>
 #include <time.h>
-#include <sys/time.h>
 #include <errno.h>
 #include <thread>
 #include <iomanip>
@@ -23,11 +27,16 @@
 #define MT_MODE 1004
 #define MD_IDS 1005
 #define DS_AL 1006
+#define NO_COPY 1007
 
 const char  *default_dfp_path = "model/single_ssd_mobilenet_300_MX3.dfp";
+const char  *default_server_addr = "localhost";
 int frame_count = 1000;
 
 static char *dfp_path = NULL;
+static const char *server_addr = NULL;
+static bool shared_mode = false;
+static int server_port_base = 10000;
 static int grp_id = 0;
 static int max_fps = 0;
 std::chrono::milliseconds custom_duration_ms = 0ms;
@@ -37,6 +46,7 @@ static bool multi_stream_bench = false;
 static int num_fmap_convert_threads = 1;
 static bool verbose = false;
 static bool manual_threading = false;
+static bool no_copy = false;
 static bool bench_tool = false;
 int ms_done_flag = 0;
 std::atomic_bool runflag;
@@ -89,21 +99,25 @@ static void _error_exit(const char *s){
 static void print_usage(int argc, char **argv){
         std::cout << "Usage: " << argv[0] << " [options] \n\n" <<
                     "Options:\n" <<
+                      "-h | --help            Print this message\n" <<
                       "-H | --hello           Check connection to MXA devices and get device info\n" <<
                       "-d | --dfp filename    DFP model file to test, such as '" << default_dfp_path << "'\n" <<
                       "-m | --multistream     Run accl bench for multistream\n" <<
                       "-n | --numstreams      Number of streams to run multistream accl bench, default= " << num_streams << " for singlestream 2 if multistream is chosen\n"
                       "-c | --convert_threads Number of feature map format conversion threads, default= " << num_fmap_convert_threads << "\n" << 
-                      "-h | --help            Print this message\n" <<
                       "-g | --group           Accerator group ID, default=" << grp_id << "\n" <<
                       "-f | --frames          Number of frame for testing inference performance, default=" << frame_count << " secs\n" <<
-                      "-v | --verbose         print all the required logs\n"
+                      "-s | --server_addr     Address to mx_server (can be local or remote), default=" << default_server_addr << "\n" <<
+                      "-p | --server_port     Base port for mx_server connection, default=" << server_port_base << "\n" <<
+                      "-r | --shared_mode     Use Shared Mode (run DFP on mx_server instead of directly accessing hardware)\n" <<
+                      "-v | --verbose         print all the required logs\n" <<
                       "--max_fps              maximum allowed FPS per stream\n"<<
                       "--iw                   number of input pre-processing workers per model\n"<<
                       "--ow                   number of output post-processing workers per model\n"<<
                       "--device_ids           MXA device IDs to be used to run benchmark, used in cases of multi device use cases. Takes in a comma separated list of device IDss\n"<<
                       "--ls                   Allows lenient setup in multi device use cases, uses available devices in case if some of the passed IDs are not available.\n"<<
-                      "--mt                   Runs benchmark tool with Manual Threading model of c++ API\n"
+                      "--mt                   Runs benchmark tool with Manual Threading model of c++ API\n"<<
+                      "--no_copy              When set the acclBench will run in no copy mode\n"
                       " ";
 }
 
@@ -120,7 +134,7 @@ void parse_device_ids(const std::string& input) {
 }
 
 
-static const char short_options[] = "d:Hhmvbn:c:g:f:";
+static const char short_options[] = "d:Hhmvbn:c:g:f:s:p:r";
 
 static const struct option
     long_options[] = {
@@ -129,17 +143,21 @@ static const struct option
         {"help", no_argument, NULL, 'h'},
         {"multistream", no_argument, NULL, 'm'},
         {"verbose", no_argument, NULL,'v'},
+        {"bench", no_argument, 0, 'b'},
         {"numstreams", required_argument, NULL, 'n'},
         {"convert_threads", required_argument, NULL, 'c'},
         {"groupID", required_argument, NULL, 'g'},
         {"frames", required_argument, NULL, 'f'},
+        {"server_addr", required_argument, NULL, 's'},
+        {"server_port", required_argument, NULL, 'p'},
+        {"shared_mode", no_argument, NULL, 'r'},
         {"max_fps", required_argument, 0,MAX_FPS_OPT},
         {"iw", required_argument, 0,IW_OPT},
         {"ow", required_argument, 0,OW_OPT},
         {"mt", no_argument, NULL, MT_MODE},
         {"device_ids", required_argument, 0, MD_IDS},
         {"ls", no_argument, NULL, DS_AL},
-        {"bench", no_argument, 0,'b'},
+        {"no_copy", no_argument, NULL, NO_COPY},
 
         {0, 0, 0, 0 }};
 
@@ -206,11 +224,13 @@ void cleanup(){
         }
         ifmap_vector.clear();
         
-        for(auto ofd : ofmap_vector){
-                for (auto& ofmap : ofd) {
-                        if(ofmap!=NULL){
-                                delete[] ofmap;
-                                ofmap = NULL;
+        if(!no_copy){
+                for(auto ofd : ofmap_vector){
+                        for (auto& ofmap : ofd) {
+                                if(ofmap!=NULL){
+                                        delete[] ofmap;
+                                        ofmap = NULL;
+                                }
                         }
                 }
         }
@@ -260,7 +280,12 @@ bool outcallback_ms(vector<const MX::Types::FeatureMap<float>*> src, int streamL
     if(recv_frame_count_vector[streamLabel] < frame_count){
         // std::cout<<"outcallback called \n";
         for(int i = 0; i<model_info_vector[streamLabel].num_out_featuremaps; ++i){
-                src[i]->get_data(ofmap_vector[streamLabel][i], false);
+                if(no_copy){
+                        src[i]->get_data_no_copy(ofmap_vector[streamLabel][i]);
+                }
+                else{
+                        src[i]->get_data(ofmap_vector[streamLabel][i], false);
+                }
         }
 
 
@@ -295,8 +320,12 @@ void print_bench_setting_info(){
         std::cout << "Number of frame per stream            = " << frame_count << "\n";
         std::cout << "Number of input workers set to        = " << ((num_input_workers == 0 || num_input_workers > num_streams) ? num_streams : num_input_workers) <<"\n";
         std::cout << "Number of output workers set to       = " << ((num_output_workers == 0 || num_output_workers > num_streams) ? num_streams : num_output_workers) <<"\n";
-        std::cout << "number of devices used                = " << num_devices << "\n";
+        std::cout << "Number of devices used                = " << num_devices << "\n";
         std::cout << "Number of FMap conversion threads     = " << num_fmap_convert_threads << "\n";
+        std::cout << "mx_server connection                  = " << server_addr << ":" << server_port_base << "\n";
+        if(shared_mode){
+            std::cout << "Shared mode                           = ON\n";
+        }
 
 }
 
@@ -349,7 +378,8 @@ void model_bench(int num_models){
                         std::vector<float*> out_data;
                         out_data.reserve(minfo.num_out_featuremaps);
                         for(int i=0; i<minfo.num_out_featuremaps ; i++){
-                                float* ofmap = new float[minfo.out_featuremap_sizes[i]];
+                                float* ofmap = NULL;
+                                if(!no_copy) ofmap = new float[minfo.out_featuremap_sizes[i]];
                                 // std::cout<<"size of featuremap " << i << "  " << minfo.out_featuremap_sizes[i] << "\n";
                                 out_data.push_back(ofmap);
                         }
@@ -549,6 +579,10 @@ int main(int argc, char **argv)
                 print_usage(argc, argv);
                 exit(EXIT_FAILURE);
         }
+
+        // set default
+        server_addr = default_server_addr;
+
         for (;;){
                 int idx;
                 int c;
@@ -572,6 +606,21 @@ int main(int argc, char **argv)
 
                         case 'd':
                                 dfp_path = optarg;
+                                break;
+
+                        case 's':
+                                server_addr = optarg;
+                                break;
+
+                        case 'p':
+                                errno = 0;
+                                server_port_base = strtol(optarg,NULL,0);
+                                if (errno)
+                                    _error_exit(optarg);
+                                break;
+
+                        case 'r':
+                                shared_mode = true;
                                 break;
 
                         case 'm':
@@ -656,6 +705,9 @@ int main(int argc, char **argv)
                         case MT_MODE:
                                 frame_count++;
                                 manual_threading = true;
+                                break; 
+                        case NO_COPY:
+                                no_copy = true;
                                 break;              
 
                         default:
@@ -675,7 +727,17 @@ int main(int argc, char **argv)
         else{
                 std::cout << "\033[3;34m*************************************************\n";
                 std::cout << "*      Evaluate dfp performance using MX3       *\n";
-                std::cout << "*************************************************\033[m\n";
+                std::cout << "*************************************************\033[m\n\n";
+
+                // if the pointers aren't equal, user manually set server address
+                if( (server_addr != default_server_addr) || (server_port_base != 10000) || (shared_mode == true) ){
+                    std::cout << "mx_server connection at " << server_addr << ":" << server_port_base << "\n";
+                    if(shared_mode){
+                        std::cout << "Mode: SHARED\n\n";
+                    } else {
+                        std::cout << "Mode: LOCAL\n\n";
+                    }
+                }
 
                 runflag.store(true);
                 if(max_fps!=0){
@@ -689,11 +751,11 @@ int main(int argc, char **argv)
                 }
                 if(manual_threading){
                         if(multi_device_bench){
-                                accl_mt = new MX::Runtime::MxAcclMT;
+                                accl_mt = new MX::Runtime::MxAcclMT(shared_mode, server_addr, server_port_base);
                                 accl_mt->connect_dfp(dfp_path, device_ids);
                         }
                         else {
-                                accl_mt = new MX::Runtime::MxAcclMT;
+                                accl_mt = new MX::Runtime::MxAcclMT(shared_mode, server_addr, server_port_base);
                                 accl_mt->connect_dfp(dfp_path, grp_id);
                         }
                         num_models = accl_mt->get_num_models();
@@ -709,12 +771,12 @@ int main(int argc, char **argv)
                 }
                 else{
                         if(multi_device_bench){
-                                accl = new MX::Runtime::MxAccl;
+                                accl = new MX::Runtime::MxAccl(shared_mode, server_addr, server_port_base);
                                 accl->connect_dfp(dfp_path, device_ids);
 
                         }
                         else{
-                                accl = new MX::Runtime::MxAccl;
+                                accl = new MX::Runtime::MxAccl(shared_mode, server_addr, server_port_base);
                                 accl->connect_dfp(dfp_path, grp_id);
                         }
 

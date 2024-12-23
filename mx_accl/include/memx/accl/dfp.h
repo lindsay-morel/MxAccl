@@ -37,6 +37,8 @@
 #include <string>
 #include <vector>
 
+#include <openssl/sha.h>
+
 /**
  * @brief Namespace that includes all DFP-related types and classes
  */
@@ -122,7 +124,7 @@ namespace Dfp
     uint16_t dim_w;      // shape dimension y (width)
     uint16_t dim_z;      // shape dimension z
     uint32_t dim_c;      // shape dimension c (channels (user, after HPOC))
-    int total_size;
+    size_t total_size;
 
     // input port only:
     uint8_t range_convert_enabled; // FP->RGB using data ranges conversion
@@ -165,6 +167,7 @@ namespace Dfp
     int num_models; // number of models in this dfp
     std::vector<std::vector<uint8_t>> model_inports;
     std::vector<std::vector<uint8_t>> model_outports;
+    uint64_t hardware_hash;
   };
 
   /**
@@ -321,6 +324,10 @@ namespace Dfp
     // orrrrrr the dfp ptr
     const uint8_t *src_dfp_bytes;
 
+    uint64_t hardware_size;
+
+    uint64_t dfp_byte_size;
+    
   private:
     // actually parses the dfp
     // supports v6 and v5 only
@@ -336,6 +343,8 @@ namespace Dfp
 
     // the file path
     std::string src_file_path;
+
+    uint8_t* mutable_dfp_bytes;    
 
   }; // DfpObject
 

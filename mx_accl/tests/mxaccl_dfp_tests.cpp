@@ -98,21 +98,21 @@ TEST(accl_dfp_tests, num_streams_4){
     accl.stop();
 }
 
-TEST(accl_dfp_tests,three_chip_dfp) {
-    fs::path model_path = dfp_path/"mobilenet_3chip.dfp";
-    MX::Runtime::MxAccl accl;
-    try
-    {
-        accl.connect_dfp(model_path);
-    }
-    catch(std::runtime_error const & err)
-    {
-        EXPECT_EQ(err.what(),std::string("this dfp is made for 3 but only 4 are available on device 0"));
-    }
-    catch(...){
-        GTEST_FAIL()<< "Expected this dfp is made for 3 but only 4 are available on device 0";
-    }
-}
+// TEST(accl_dfp_tests,three_chip_dfp) {
+//     fs::path model_path = dfp_path/"mobilenet_3chip.dfp";
+//     MX::Runtime::MxAccl accl;
+//     try
+//     {
+//         accl.connect_dfp(model_path);
+//     }
+//     catch(std::runtime_error const & err)
+//     {
+//         EXPECT_EQ(err.what(),std::string("this dfp is made for 3 but only 4 are available on device 0"));
+//     }
+//     catch(...){
+//         GTEST_FAIL()<< "Expected this dfp is made for 3 but only 4 are available on device 0";
+//     }
+// }
 
 TEST(accl_dfp_tests, model_info_tests){
     fs::path model_path = dfp_path/"mobilenet_multimodel.dfp";

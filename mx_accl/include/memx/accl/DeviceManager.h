@@ -12,6 +12,7 @@
 #include <memx/accl/utils/path.h>
 #include <memx/accl/utils/mxTypes.h>
 
+using mx_retval_t = MX::Utils::mx_retval;
 
 namespace MX
 {
@@ -42,27 +43,30 @@ namespace MX
 
     class DeviceManager{
       public:
-        DeviceManager();
-        bool opendfp(const std::filesystem::path dfp_filename, int dfp_tag);
-        bool opendfp_bytes(const uint8_t *b, int dfp_tag);
-        bool setup_mxa(int dfp_tag, std::vector<int>& pgroup_ids);
-        void attach_dfp_to_device(int dfp_tag);
-        void download_dfp_to_device(int dfp_tag);
-        void init_mx_models(int dfp_tag, std::vector<ModelBase *>* mxmodel_vector );
+        DeviceManager(void* stub = NULL, bool server_mode = false);
+        mx_retval_t opendfp(const std::filesystem::path dfp_filename, int dfp_tag);
+        mx_retval_t opendfp_bytes(const uint8_t *b, int dfp_tag);
+        mx_retval_t setup_mxa(int dfp_tag, std::vector<int>& pgroup_ids);
+        mx_retval_t attach_dfp_to_device(int dfp_tag);
+        mx_retval_t download_dfp_to_device(int dfp_tag);
+        mx_retval_t init_mx_models(int dfp_tag, std::vector<ModelBase *>* mxmodel_vector );
 
         //Getter functions
         int get_dfp_num_chips(int dfp_tag);
         int get_dfp_num_models(int dfp_tag);
         bool get_dfp_validity(int dfp_tag);
 
-        void close_all_devices();
+        mx_retval_t close_all_devices();
         void cleanup__all_dfps();
         // void cleanup_all_setup_maps();
-        static void update_context_tracker_id();
-        static int get_context_tracker_id();
+        // static void update_context_tracker_id();
+        // static int get_context_tracker_id();
 
         // bool dfp_tag_duplicate_check(int dfp_tag);
         void print_available_devices();
+        void cleanup_dfp(int dfp_tag);
+        mx_retval_t close_device(int device_id);
+        int get_num_outports(int dfp_tag);
         /*
         // Additional get function disabled for now but might need later
         float get_dfp_mxa_gen();
@@ -73,12 +77,12 @@ namespace MX
 
       private:
 
-        void get_available_devices();
-        void throw_chip_exception(int pdfp_chips, int pdevice_chips, int device_id);
-        void throw_mxa_gen_exception(int pdfp_num_chips);
-        bool configure_device(int device_id, int device_chip_count, int pdfp_num_chips, float pmx_gen);
-        void throw_device_not_available_exception(int pdevice_id);
-        bool connect_device(int dfp_tag, int device_id);
+        mx_retval_t get_available_devices();
+        mx_retval_t throw_chip_exception(int pdfp_chips, int pdevice_chips, int device_id);
+        mx_retval_t throw_mxa_gen_exception(int pdfp_num_chips);
+        mx_retval_t configure_device(int device_id, int device_chip_count, int pdfp_num_chips, float pmx_gen);
+        mx_retval_t throw_device_not_available_exception(int pdevice_id);
+        mx_retval_t connect_device(int dfp_tag, int device_id);
 
         void set_power_mode(int device_id, int num_chips);
 
@@ -90,13 +94,16 @@ namespace MX
         mxa_device_map_type available_mxa_device_map;
 
         int all_devices_count;
-        int available_devices;
         int required_devices;
         int number_of_context_per_dfp;
         int group_id_passed;
         std::vector<int> available_devices_id;
         std::vector<int> open_devices;
 
+        void* stub_;
+        mx_retval_t try_lock(int grp_id);
+        bool server_mode_;
+        mx_retval_t device_unlock(int device_id);
     };// DeviceManager
 
  } // namespace Runtime

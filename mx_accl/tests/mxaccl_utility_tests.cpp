@@ -253,7 +253,7 @@ TEST(accl_utility_tests, mxtypes_operator){
 TEST(accl_utility_tests, post_pattern_matching){
     std::string plugin_path = "libonnxinfer";
     fs::path mx_home_path = MX::Utils::mx_get_home_dir();
-    fs::path model_path = mx_home_path/"samples"/"models/yolov7Tiny416/model_0_yolov7-tiny_416_post.onnx";
+    fs::path model_path = mx_home_path/"samples"/"models/yolov7Tiny416/yolov7-tiny_416_post.onnx";
     PrePost* obj = createObject(plugin_path,"createOnnx",model_path, {},Plugin_Onnx);
     obj->match_names({"/model/model.77/m.0/Conv_output_0","/model/model.77/m.2/Conv_output_0","/model/model.77/m.1/Conv_output_0","/model/model.77/m.3/Conv_output_0"},Process_Post);
     ASSERT_EQ(obj->dfp_pattern[0],0);
@@ -267,7 +267,7 @@ TEST(accl_utility_tests, post_pattern_matching){
 TEST(accl_utility_tests, post_num_mismatch){
     std::string plugin_path = "libonnxinfer";
     fs::path mx_home_path = MX::Utils::mx_get_home_dir();
-    fs::path model_path = mx_home_path/"samples"/"models/yolov7Tiny416/model_0_yolov7-tiny_416_post.onnx";
+    fs::path model_path = mx_home_path/"samples"/"models/yolov7Tiny416/yolov7-tiny_416_post.onnx";
     PrePost* obj = createObject(plugin_path,"createOnnx",model_path, {},Plugin_Onnx);
     try {
         obj->match_names({"/model/model.77/m.0/Conv_output_0","/model/model.77/m.2/Conv_output_0"},Process_Post);
@@ -283,7 +283,7 @@ TEST(accl_utility_tests, post_num_mismatch){
 TEST(accl_utility_tests, post_name_mismatch){
     std::string plugin_path = "libonnxinfer";
     fs::path mx_home_path = MX::Utils::mx_get_home_dir();
-    fs::path model_path = mx_home_path/"samples"/"models/yolov7Tiny416/model_0_yolov7-tiny_416_post.onnx";
+    fs::path model_path = mx_home_path/"samples"/"models/yolov7Tiny416/yolov7-tiny_416_post.onnx";
     PrePost* obj = createObject(plugin_path,"createOnnx",model_path, {},Plugin_Onnx);
     try {
         obj->match_names({"/model/model.77/m.0/Conv_output_0","/model/model.77/m.2/Conv_output_0","/model/model.77/m.3/Conv_output_0"},Process_Post);

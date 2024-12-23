@@ -13,8 +13,8 @@ using namespace std::literals;
 template <typename T>
 class sync_queue {
     public:
-        sync_queue<T>(): m_max_size(0) {}
-        sync_queue<T>(size_t max_size): m_max_size(max_size) {};
+        sync_queue(): m_max_size(0) {}
+        sync_queue(size_t max_size): m_max_size(max_size) {};
         bool push(const T& item, std::chrono::milliseconds timeout=0ms);
         std::optional<T> pop(std::chrono::milliseconds timeout=0ms);
         int get_size();

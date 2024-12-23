@@ -95,5 +95,6 @@ uint64_t mxpack_save_list(mxpack_list_t *l, uint8_t *b);
 void mxpack_print_dict(const mxpack_dict_t *d, int indent_level);
 void mxpack_print_list(const mxpack_list_t *l, int indent_level);
 
+uint8_t* dfpv6_extract_hw_dfp_bytes(const uint8_t *b, uint64_t& length);
 
 #endif

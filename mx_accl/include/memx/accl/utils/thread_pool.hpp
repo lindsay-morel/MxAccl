@@ -7,6 +7,7 @@
 #include <atomic>
 #include <mutex>
 #include <condition_variable>
+#include <algorithm>
 
 #include <memx/accl/utils/sync_queue.hpp>
 

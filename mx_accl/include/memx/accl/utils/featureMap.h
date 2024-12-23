@@ -71,6 +71,18 @@ namespace MX
              * @return MX_Status Success if the copy is successfull
              */
             MX::Utils::MX_status get_data(T *out_data , bool channel_first=false) const;
+
+            /**
+             * @brief Function get output from Accelarator. Sets the internal pointer to the featureMap to the passed out_data pointer. Does not copy data from featureMap to passed pointer.
+             * The out_data pointer can never be deleted by the user. It is owned by the featureMap. The validity of the out_data pointer is until the callback is returned.
+             * This function is intended for embedded systems with slow dram access. So unless necessary, get_data() should be used.
+             * 
+             * @param out_data pointer to destination where output data from accelrator to be copied
+             * @param channel_first boolean variable based on which output data is copied in channel first or channel last format. default is false to return channel last format
+             * @return MX_Status Success if the copy is successfull
+             */
+            MX::Utils::MX_status get_data_no_copy(T*& out_data, bool channel_first = false) const;
+
             /**
              * @brief Function to set input data to Accelarator. Copies data from provided input pointer to featureMap
              *
@@ -111,7 +123,10 @@ namespace MX
             FeatureMap_Type fm_type = FM_DFP;
             int get_num_fmap_threads() const;
         private:
-            T *fmap_data; // data in user-facing format (float or uint8_t)
+            mutable T *fmap_data; // data in user-facing format (float or uint8_t)
+            mutable T *transposed_fmap_data;
+            T* fmap_data_internal;
+            T* transposed_fmap_data_internal;
             size_t featureMap_size; // size, in terms of user-facing format
             MX_data_format fmt; // data format
             uint8_t *formatted_data;

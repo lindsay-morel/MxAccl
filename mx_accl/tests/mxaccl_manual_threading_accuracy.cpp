@@ -95,7 +95,7 @@ TEST(accl_manual_threading_accuracy_test, single_stream_mobilenet){
 }
 
 
-void send(MX::Runtime::MxAcclMT* accl, int num_frames, int stream_idx){
+void send_fmap(MX::Runtime::MxAcclMT* accl, int num_frames, int stream_idx){
     int i = 0;
     while(++i <= num_frames){
         fs::path img_path = mx_accl_path/"tests"/images[stream_idx];
@@ -112,7 +112,7 @@ void send(MX::Runtime::MxAcclMT* accl, int num_frames, int stream_idx){
     }
 }
 
-void receive(MX::Runtime::MxAcclMT* accl, int num_frames, int stream_idx, int32_t timeout){
+void receive_fmap(MX::Runtime::MxAcclMT* accl, int num_frames, int stream_idx, int32_t timeout){
     int i = 0;
     while(++i<=num_frames){
         float* fmap = new float[1000];
@@ -144,10 +144,10 @@ TEST(accl_manual_threading_accuracy_test, multistream_mobilenet){
     MX::Runtime::MxAcclMT* accl;
     accl = new MX::Runtime::MxAcclMT;
     accl->connect_dfp(model_path);
-    std::thread send_thread = std::thread(send, accl, 20,0);
-    std::thread recv_thread = std::thread(receive, accl, 20,0,0);
-    std::thread send_thread_1 = std::thread(send, accl, 20,1);
-    std::thread recv_thread_1 = std::thread(receive, accl, 20,1,0);
+    std::thread send_thread = std::thread(send_fmap, accl, 20,0);
+    std::thread recv_thread = std::thread(receive_fmap, accl, 20,0,0);
+    std::thread send_thread_1 = std::thread(send_fmap, accl, 20,1);
+    std::thread recv_thread_1 = std::thread(receive_fmap, accl, 20,1,0);
 
     if(send_thread.joinable() && send_thread_1.joinable()){
         send_thread.join();
@@ -171,10 +171,10 @@ TEST(accl_manual_threading_2_chip_accuracy_test, 2chip_multistream_mobilenet){
     MX::Runtime::MxAcclMT* accl;
     accl = new MX::Runtime::MxAcclMT;
     accl->connect_dfp(model_path);
-    std::thread send_thread = std::thread(send, std::ref(accl), 20,0);
-    std::thread recv_thread = std::thread(receive, std::ref(accl), 20,0,0);
-    std::thread send_thread_1 = std::thread(send, std::ref(accl), 20,1);
-    std::thread recv_thread_1 = std::thread(receive, std::ref(accl), 20,1,0);
+    std::thread send_thread = std::thread(send_fmap, std::ref(accl), 20,0);
+    std::thread recv_thread = std::thread(receive_fmap, std::ref(accl), 20,0,0);
+    std::thread send_thread_1 = std::thread(send_fmap, std::ref(accl), 20,1);
+    std::thread recv_thread_1 = std::thread(receive_fmap, std::ref(accl), 20,1,0);
 
     if(send_thread.joinable() && send_thread_1.joinable()){
         send_thread.join();
@@ -197,10 +197,10 @@ TEST(accl_manual_threading_accuracy_test, multistream_mobilenet_timeout){
     MX::Runtime::MxAcclMT* accl;
     accl = new MX::Runtime::MxAcclMT;
     accl->connect_dfp(model_path);
-    std::thread send_thread = std::thread(send, std::ref(accl), 20,0);
-    std::thread recv_thread = std::thread(receive, std::ref(accl), 20,0,1000);
-    std::thread send_thread_1 = std::thread(send, std::ref(accl), 20,1);
-    std::thread recv_thread_1 = std::thread(receive, std::ref(accl), 20,1,1000);
+    std::thread send_thread = std::thread(send_fmap, std::ref(accl), 20,0);
+    std::thread recv_thread = std::thread(receive_fmap, std::ref(accl), 20,0,1000);
+    std::thread send_thread_1 = std::thread(send_fmap, std::ref(accl), 20,1);
+    std::thread recv_thread_1 = std::thread(receive_fmap, std::ref(accl), 20,1,1000);
 
     if(send_thread.joinable() && send_thread_1.joinable()){
         send_thread.join();

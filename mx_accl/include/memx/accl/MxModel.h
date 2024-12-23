@@ -22,6 +22,7 @@
 #include <memx/accl/utils/mxTypes.h>
 
 using namespace std;
+struct model_daemon_items;
 
 namespace MX
 {
@@ -230,8 +231,14 @@ namespace MX
             void _pre_inference(int stream);
             void _pre_copy(int stream);
 
+            unique_ptr<model_daemon_items> daemon_items_;
+            std::string uuid_;
+            void _recv_wait(int stream);
+            void _send_wait(int stream);
+            void _manual_recv_wait(int stream);
+
         public:
-            MxModel(int model_id, Dfp::DfpObject *dfp_object,  const std::vector<int>* popen_contexts = NULL); // Construct model for Inference
+            MxModel(int model_id, Dfp::DfpObject *dfp_object,  const std::vector<int>* popen_contexts = NULL,void* model_stub_send =NULL,void* model_stub_recv=NULL, std::string uuid = ""); // Construct model for Inference
 
             void model_start() override;
             void model_stop() override;

@@ -47,32 +47,68 @@ endif()
 if (CMAKE_SYSTEM_PROCESSOR MATCHES "(x86)|(X86)|(amd64)|(AMD64)|(x86_64)|(X86_64)")
   set(
     CMAKE_C_FLAGS
-    "${CMAKE_C_FLAGS} -Wall -Wextra -pipe -fPIC -O3 ${CMAKE_X86_FLAGS_BASE} ${CMAKE_X86_FLAGS_AVX2} -mtune=generic -fopenmp"
+    "${CMAKE_C_FLAGS} -Wall -Wextra -pipe -fPIC -static-libgcc -static-libstdc++ -O3 ${CMAKE_X86_FLAGS_BASE} ${CMAKE_X86_FLAGS_AVX2} -mtune=generic -fopenmp -Wl,-gc-sections"
   )
   set(
     CMAKE_CXX_FLAGS
-    "${CMAKE_CXX_FLAGS} -Wall -Wextra -pipe -fPIC -O3 ${CMAKE_X86_FLAGS_BASE} ${CMAKE_X86_FLAGS_AVX2} -mtune=generic -fopenmp"
+    "${CMAKE_CXX_FLAGS} -Wall -Wextra -pipe -fPIC -static-libgcc -static-libstdc++ -O3 ${CMAKE_X86_FLAGS_BASE} ${CMAKE_X86_FLAGS_AVX2} -mtune=generic -fopenmp -Wl,-gc-sections"
   )
 elseif (CMAKE_SYSTEM_PROCESSOR MATCHES "(aarch64)|(AARCH64)|(arm64)|(ARM64)")
   set(
     CMAKE_C_FLAGS
-    "${CMAKE_C_FLAGS} -Wall -Wextra -pipe -fPIC -O3 -march=armv8-a+simd -fopenmp"
+    "${CMAKE_C_FLAGS} -Wall -Wextra -pipe -fPIC -static-libgcc -static-libstdc++ -O3 -march=armv8-a+simd -mtune='cortex-a76.cortex-a55' -fopenmp -Wl,-gc-sections"
   )
   set(
     CMAKE_CXX_FLAGS
-    "${CMAKE_CXX_FLAGS} -Wall -Wextra -pipe -fPIC -O3 -march=armv8-a+simd -fopenmp"
+    "${CMAKE_CXX_FLAGS} -Wall -Wextra -pipe -fPIC -static-libgcc -static-libstdc++ -O3 -march=armv8-a+simd -mtune='cortex-a76.cortex-a55' -fopenmp -Wl,-gc-sections"
   )
 elseif (CMAKE_SYSTEM_PROCESSOR MATCHES "(riscv64)|(RISCV64)|(RV64)|(rv64gc)")
   set(
     CMAKE_C_FLAGS
-    "${CMAKE_C_FLAGS} -Wall -Wextra -pipe -fPIC -O3 -march=rv64gc_zba_zbb_zbs -fopenmp"
+    "${CMAKE_C_FLAGS} -Wall -Wextra -pipe -fPIC -O3 -march=rv64gc_zba_zbb_zbs -fopenmp -Wl,-gc-sections"
   )
   set(
     CMAKE_CXX_FLAGS
-    "${CMAKE_CXX_FLAGS} -Wall -Wextra -pipe -fPIC -O3 -march=rv64gc_zba_zbb_zbs -fopenmp"
+    "${CMAKE_CXX_FLAGS} -Wall -Wextra -pipe -fPIC -O3 -march=rv64gc_zba_zbb_zbs -fopenmp -Wl,-gc-sections"
   )
 endif()
 
+include(grpc_common.cmake)
+
+# Proto file
+get_filename_component(mx_proto "mx_proc.proto" ABSOLUTE)
+get_filename_component(mx_proto_path "${mx_proto}" PATH)
+
+# Generated sources
+set(mx_proto_srcs "${CMAKE_CURRENT_BINARY_DIR}/mx_proc.pb.cc")
+set(mx_proto_hdrs "${CMAKE_CURRENT_BINARY_DIR}/mx_proc.pb.h")
+set(mx_grpc_srcs "${CMAKE_CURRENT_BINARY_DIR}/mx_proc.grpc.pb.cc")
+set(mx_grpc_hdrs "${CMAKE_CURRENT_BINARY_DIR}/mx_proc.grpc.pb.h")
+add_custom_command(
+      OUTPUT "${mx_proto_srcs}" "${mx_proto_hdrs}" "${mx_grpc_srcs}" "${mx_grpc_hdrs}"
+      COMMAND ${_PROTOBUF_PROTOC}
+      ARGS --grpc_out "${CMAKE_CURRENT_BINARY_DIR}"
+        --cpp_out "${CMAKE_CURRENT_BINARY_DIR}"
+        -I "${mx_proto_path}"
+        --plugin=protoc-gen-grpc="${_GRPC_CPP_PLUGIN_EXECUTABLE}"
+        "${mx_proto}"
+      DEPENDS "${mx_proto}")
+
+# Include generated *.pb.h files
+include_directories("${CMAKE_CURRENT_BINARY_DIR}")
+
+# mx_grpc_proto
+add_library(mx_grpc_proto
+  ${mx_grpc_srcs}
+  ${mx_grpc_hdrs}
+  ${mx_proto_srcs}
+  ${mx_proto_hdrs})
+target_link_libraries(mx_grpc_proto
+  ${_REFLECTION}
+  ${_GRPC_GRPCPP}
+  ${_PROTOBUF_LIBPROTOBUF})
+
+set(MX_GRPC_LIB "mx_grpc_proto")
 
 #define SUBDIR macro
 MACRO(SUBDIRLIST result curdir)
@@ -88,6 +124,8 @@ ENDMACRO()
 
 
 enable_testing()
+set(MXACCL_DYNAMIC "mx_accl")
+set(MXACCL_STATIC "mx_accl_static")
 
 SUBDIRLIST(SUBDIRS ${CMAKE_CURRENT_SOURCE_DIR} "*")
 

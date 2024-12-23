@@ -32,7 +32,7 @@ void test_num_frames(){
     EXPECT_EQ(sent_num_frames_2.load(),recv_num_frames_2.load());
 }
 
-void send(MX::Runtime::MxAcclMT* accl, int streamidx){
+void send_fmap(MX::Runtime::MxAcclMT* accl, int streamidx){
 
     std::vector<float> input;
     int i = 0;
@@ -51,7 +51,7 @@ void send(MX::Runtime::MxAcclMT* accl, int streamidx){
     }
 }
 
-void receive(MX::Runtime::MxAcclMT* accl,int stream_idx){
+void receive_fmap(MX::Runtime::MxAcclMT* accl,int stream_idx){
     int i = 0;
     while(++i <= 20){
         float* fmap = new float[2];
@@ -87,11 +87,11 @@ TEST(accl_manual_threading_accuracy_test, multistream_onnx){
     accl->connect_pre_model(pre_path);
     accl->connect_post_model(post_path);
 
-    std::thread send_thread = std::thread(send, accl,0);
-    std::thread recv_thread = std::thread(receive,accl,0);
+    std::thread send_thread = std::thread(send_fmap, accl,0);
+    std::thread recv_thread = std::thread(receive_fmap,accl,0);
 
-    std::thread send_thread_1 = std::thread(send, accl, 1);
-    std::thread recv_thread_1 = std::thread(receive, accl,1);
+    std::thread send_thread_1 = std::thread(send_fmap, accl, 1);
+    std::thread recv_thread_1 = std::thread(receive_fmap, accl,1);
 
     if(send_thread.joinable() && send_thread_1.joinable()){
         send_thread.join();
@@ -135,10 +135,10 @@ TEST(accl_manual_threading_accuracy_test, multistream_tf){
     accl->connect_pre_model(pre_path);
     accl->connect_post_model(post_path);
     std::thread send_thread = std::thread(tf_send, accl,0);
-    std::thread recv_thread = std::thread(receive,accl,0);
+    std::thread recv_thread = std::thread(receive_fmap,accl,0);
 
     std::thread send_thread_1 = std::thread(tf_send, accl, 1);
-    std::thread recv_thread_1 = std::thread(receive, accl,1);
+    std::thread recv_thread_1 = std::thread(receive_fmap, accl,1);
 
     if(send_thread.joinable() && send_thread_1.joinable()){
         send_thread.join();

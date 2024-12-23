@@ -120,6 +120,7 @@ unsigned int DataShapes::operator[](std::size_t idx) const {
 // ctor using bytes
 DfpObject::DfpObject(const uint8_t *b){
     src_dfp_bytes = NULL;
+    mutable_dfp_bytes = NULL;
     iports = NULL;
     oports = NULL;
     if(__load_dfp_bytes(b) != 0){
@@ -157,6 +158,7 @@ DfpObject::DfpObject(const uint8_t *b){
 // ctor using c string
 DfpObject::DfpObject(const char *f){
     src_dfp_bytes = NULL;
+    mutable_dfp_bytes = NULL;
     iports = NULL;
     oports = NULL;
     if(__load_dfp_file(f) != 0){
@@ -194,6 +196,7 @@ DfpObject::DfpObject(const char *f){
 // ctor using string
 DfpObject::DfpObject(std::string f){
     src_dfp_bytes = NULL;
+    mutable_dfp_bytes = NULL;
     iports = NULL;
     oports = NULL;
     if(__load_dfp_file(f.c_str()) != 0){
@@ -259,6 +262,8 @@ DfpObject::~DfpObject(){
         delete [] oports;
         oports = NULL;
     }
+    if(mutable_dfp_bytes!=NULL) free(mutable_dfp_bytes);
+    mutable_dfp_bytes = NULL;
 }
 
 
@@ -445,8 +450,14 @@ int DfpObject::__load_dfp_bytes(const uint8_t *b){
     //------------------------------------------------------------------
     // DFP v6
     if(sim_data_len == 6){
-        
-        
+        uint8_t*  hardware_bytes = dfpv6_extract_hw_dfp_bytes(b+offset,hardware_size);
+        meta.hardware_hash = 0;
+        for (uint64_t i = 0; i < hardware_size; ++i) {
+            meta.hardware_hash += hardware_bytes[i];
+        }
+        free(hardware_bytes);
+        meta.dfp_version_str = "6";
+        meta.dfp_version = 6;
         mxpack_list_t *templ = NULL;
         mxpack_dict_t *tempd = NULL;
         mxpack_ascii_t *temps = NULL;
@@ -1089,6 +1100,7 @@ int DfpObject::__load_dfp_file(const char *f){
     // get size and alloc
     fseek(fp, 0L, SEEK_END);
     size_t sz = ftell(fp);
+    dfp_byte_size = sz;
 
     uint8_t *all = (uint8_t*) malloc(sz);
 
@@ -1107,10 +1119,8 @@ int DfpObject::__load_dfp_file(const char *f){
 
     int retval = __load_dfp_bytes(all);
 
-    free(all);
+    mutable_dfp_bytes = all;
     all = NULL;
-
-    src_dfp_bytes = NULL;
 
     return retval;
 }

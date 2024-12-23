@@ -1,7 +1,8 @@
 #include <fstream>
 #include <memx/accl/MxModel.h>
 #include <memx/accl/prepost.h>
-
+#include <memx/accl/daemon.h>
+#include "mx_proc.grpc.pb.h"
 
 using namespace MX::Runtime;
 using namespace MX::Types;
@@ -13,10 +14,19 @@ template class MxModel<float>;
 #define VECTOR_INIT_BUFFER_LEN 500
 std::chrono::milliseconds INPUT_TASK_TIMEOUT = 500ms;
 
+struct model_daemon_items
+{
+   mxstream::MxService::Stub* model_stub_send_;
+   mxstream::MxService::Stub* model_stub_recv_;
+};
+
 template <typename T>
-MxModel<T>::MxModel(int model_id, Dfp::DfpObject *dfp, const std::vector<int>* popen_contexts) : model_id_{model_id},
-                                                                        dfp_{dfp},
-                                                                        open_contexts{popen_contexts}{
+MxModel<T>::MxModel(int model_id, Dfp::DfpObject *dfp, const std::vector<int>* popen_contexts,
+                        void* model_stub_send,void* model_stub_recv, std::string uuid) :
+                                model_id_{model_id},
+                                dfp_{dfp},
+                                open_contexts{popen_contexts},
+                                uuid_{uuid}{
 
     //Initate the model
     model_run.store(false);
@@ -45,6 +55,9 @@ MxModel<T>::MxModel(int model_id, Dfp::DfpObject *dfp, const std::vector<int>* p
     context_send_current_index = 0;
     number_of_contexts = open_contexts->size();
     
+    daemon_items_ = std::make_unique<model_daemon_items>();
+    daemon_items_->model_stub_send_ = (mxstream::MxService::Stub*)model_stub_send;
+    daemon_items_->model_stub_recv_ = (mxstream::MxService::Stub*)model_stub_recv;
     
     for(int ip = 0; ip<num_in_ports ; ++ip){
         int port_idx = in_ports_[ip];
@@ -83,8 +96,7 @@ void MxModel<T>::create_and_append_in_fm(){
     if(!pre_model_path.empty()){
         PrePost* temp_model = mx_create_prepost(pre_model_path);
         if(temp_model == nullptr){
-            throw(std::runtime_error("The given post-processing model has dynamic output size. Please provide the largest \
-                                            possible size of output in the second argument of connect_post_model()"));
+            throw(std::runtime_error("Error creating pre-procesing model - please verify connect_pre_model() "));
         }
         pre_model.push_back(temp_model);
     }
@@ -142,7 +154,7 @@ void MxModel<T>::create_and_append_out_fm(){
     if(!post_model_path_.empty()){
         PrePost* temp_model = mx_create_prepost(post_model_path_);
         if(temp_model == nullptr){
-            throw(std::runtime_error("Failed to create post procesing model"));
+                throw(std::runtime_error("Error creating post-procesing model - please verify connect_post_model() "));
         }
         post_model.push_back(temp_model);
     }
@@ -164,7 +176,8 @@ void MxModel<T>::model_set_post(std::filesystem::path post_path, const std::vect
     post_info_model = mx_create_prepost(post_model_path_,post_out_size);
     if(post_info_model->dynamic_output){
         if(post_out_size.size()==0){
-            throw std::runtime_error("The post-processing model has dynamic outputs but output sizes vector not passed");
+            throw std::runtime_error("The given post-processing model might have dynamic output size. Please provide the largest \
+                                    possible size of output in the second argument of connect_post_model()");
         }
     }
 
@@ -257,17 +270,8 @@ void MxModel<T>::set_parallel_fmap_convert(int num_threads){
 
 template <typename T>
 void MxModel<T>::model_start(){
-    //Create input vector of featureMaps for all streams
-    if(!pre_model_path.empty()){
-        for (int n = 0; n < num_streams_; ++n){
-            pre_model.push_back(mx_create_prepost(pre_model_path));
-            if(pre_model[n] == nullptr){
-                throw(std::runtime_error("The given post-processing model has dynamic output size. Please provide the largest \
-                                                possible size of output in the second argument of connect_post_model()"));
-            }
-        }
-    }
 
+    //Create input vector of featureMaps for all streams
     for(int i=0; i<num_streams_; ++i){
             create_and_append_in_fm();
             create_and_append_out_fm();
@@ -406,7 +410,7 @@ bool MxModel<T>::inputTask(combined_input_callback_t in_cb, vector<const Feature
         stream_queue.push(stream);
         input_thread_counter--;
         {
-            std::unique_lock lock(input_task_mutex);
+            std::lock_guard lock(input_task_mutex);
             input_task_flag = true;
             input_task_cv.notify_one();
         }
@@ -433,7 +437,7 @@ bool MxModel<T>::outputTask(combined_output_callback_t out_cb, vector<const Feat
         out_cb(outputs,stream_idx);
     }    
     {
-        std::unique_lock<std::mutex> lock(*out_task_mutex[stream]);
+        std::lock_guard<std::mutex> lock(*out_task_mutex[stream]);
         out_featuremaps_[stream][0]->set_out_ready(true);
     }
     out_task_cv[stream]->notify_one();
@@ -518,7 +522,7 @@ void MxModel<T>::model_stop()
     out_task_mutex.clear();
 
     //Flushing the MPU (Sake of sanity and shouldn't be required if everything goes as intended)
-    if(num_streams_>0){
+    if(daemon_items_->model_stub_recv_==NULL && num_streams_>0){
         for(int ctx = 0; ctx < number_of_contexts; ctx++){
 
             int context_id = open_contexts->at(ctx);
@@ -544,7 +548,6 @@ void MxModel<T>::model_stop()
     input_pool = NULL;
     delete output_pool;
     output_pool = NULL;
-    
     delete model_send_thread;
     model_send_thread = NULL;
     delete model_recv_thread;
@@ -613,7 +616,7 @@ void MxModel<T>::model_manual_stop(){
 
     // std::cout<<"MODEL STOPPPPP CALLED \n\n";
     //Flushing the MPU (Sake of sanity and shouldn't be required if everything goes as intended)
-    if(out_featuremaps_.size()>0){
+    if(daemon_items_->model_stub_recv_==NULL && out_featuremaps_.size()>0){
         for(int ctx = 0; ctx < number_of_contexts; ctx++){
             int context_id = open_contexts->at(ctx);
             memx_status status = MEMX_STATUS_OK;
@@ -732,6 +735,14 @@ MX::Types::MxModelInfo MxModel<T>::return_post_model_info(){
 }
 
 template <typename T>
+void MxModel<T>::_send_wait(int stream){
+    in_featuremaps_[stream][0]->set_in_ready(true);
+    std::lock_guard lock(input_thread_mutex);
+    input_thread_counter++;
+    input_thread_cv.notify_all();
+}
+ 
+template <typename T>
 void MxModel<T>::model_send_fun()
 {
 
@@ -746,27 +757,49 @@ void MxModel<T>::model_send_fun()
             while(memx_status_error(send_status)){
                 int context_to_send = open_contexts->at(context_send_current_index);
 
-                for (int i = 0; i < static_cast<int>(in_ports_.size()); ++i)
-                {                         
-                    // int timeout = (i == 0)? 1 : 0;
-                    send_status = memx_stream_ifmap(context_to_send , in_ports_[i], in_featuremaps_[stream][i]->get_formatted_data(), 0);
+                if(daemon_items_->model_stub_send_==NULL){
+                    for (int i = 0; i < static_cast<int>(in_ports_.size()); ++i)
+                    {                         
+                        // int timeout = (i == 0)? 1 : 0;
+                        send_status = memx_stream_ifmap(context_to_send , in_ports_[i], in_featuremaps_[stream][i]->get_formatted_data(), 0);
+                    }
+                }
+
+                else{
+                    vector<mxstream::MxData*> fmap_list;
+                    for (int i = 0; i < static_cast<int>(in_ports_.size()); ++i){
+                        fmap_list.push_back(new mxstream::MxData);
+                        fmap_list[i]->set_fmap(reinterpret_cast<const char*>(in_featuremaps_[stream][i]->get_formatted_data()), in_featuremaps_[stream][i]->get_formatted_size());
+                        fmap_list[i]->set_port_id(in_ports_[i]);
+                        fmap_list[i]->set_ctx_id(context_to_send);
+                    }
+                    _send_wait(stream);
+                    mxstream::Ping reply;
+                    IfmapSend sender(daemon_items_->model_stub_send_,fmap_list,&reply,uuid_,static_cast<int>(in_ports_.size()));
+                    grpc::Status status = sender.Await();
+                    for (int i = 0; i < static_cast<int>(in_ports_.size()); ++i){
+                        delete fmap_list[i];
+                    }
+                    fmap_list.clear();
+                    if(!status.ok()){
+                        throw std::runtime_error("Grpc connection error for ifmap with: "+status.error_details());
+                    }
+                    if(!reply.recv()){
+                        throw std::runtime_error(reply.msg());
+                    }
+                    send_status = MEMX_STATUS_OK;
                 }
                 
                 //update context_id every iteration
                 context_send_current_index = (context_send_current_index + 1) % number_of_contexts;
                 
                 if(memx_status_no_error(send_status)){
-
-                    in_featuremaps_[stream][0]->set_in_ready(true);
-                    {
-                        std::unique_lock lock(input_thread_mutex);
-                        input_thread_counter++;
-                        input_thread_cv.notify_all();
+                    if(daemon_items_->model_stub_send_==NULL){
+                        _send_wait(stream);
                     }
-
                     //Push the stream id and context to recv to out_queue right after sending it to ifmap
                     pair_stream_context_queue.push(std::make_pair(stream, context_to_send));
-                    std::unique_lock lock(model_recv_mutex);
+                    std::lock_guard lock(model_recv_mutex);
                     model_recv_flag = true;
                     model_recv_cv.notify_one();
                     break;
@@ -784,6 +817,16 @@ void MxModel<T>::model_send_fun()
 }
 
 template <typename T>
+void MxModel<T>::_recv_wait(int stream){
+    std::unique_lock<std::mutex> lock(*out_task_mutex[stream]);
+    while(!out_featuremaps_[stream][0]->get_out_ready())
+    {
+        out_task_cv[stream]->wait(lock);
+        // continue;
+    }
+}
+
+template <typename T>
 void MxModel<T>::model_recv_fun()
 {
     //Run till model is running or there are streams left to send to ofmap
@@ -794,25 +837,42 @@ void MxModel<T>::model_recv_fun()
             std::pair<int, int> pop_data = pair_stream_context_queue.pop(); 
             int stream = pop_data.first;
             int context_to_recv = pop_data.second;
-            //wait till particular stream thread is done with previous
-            // ofmap results
-            {
-                std::unique_lock<std::mutex> lock(*out_task_mutex[stream]);
-                while(!out_featuremaps_[stream][0]->get_out_ready())
+            if(daemon_items_->model_stub_recv_==NULL){
+                _recv_wait(stream);
+                for (int i = 0; i < static_cast<int>(out_ports_.size()); ++i)
                 {
-                    out_task_cv[stream]->wait(lock);
-                    // continue;
+                    memx_status status;
+                    {
+                        status = memx_stream_ofmap(context_to_recv , out_ports_[i], out_featuremaps_[stream][i]->get_formatted_data(), 0);
+                    }
+                    if(memx_status_error(status)){
+                        throw runtime_error("stream_ofmap failed, try resetting the MXA");              
+                    }
                 }
             }
-            for (int i = 0; i < static_cast<int>(out_ports_.size()); ++i)
-            {
-                memx_status status;
-                {
-                    status = memx_stream_ofmap(context_to_recv , out_ports_[i], out_featuremaps_[stream][i]->get_formatted_data(), 0);
+            else{
+                mxstream::OfPorts port_list;
+                port_list.set_ctx_id(context_to_recv);
+                vector<mxstream::MxData*> proto_fmap;
+                for (int i = 0; i < static_cast<int>(out_ports_.size()); ++i){
+                    port_list.add_port_id(out_ports_[i]);
+                    port_list.add_size(out_featuremaps_[stream][i]->get_formatted_size());
+                    proto_fmap.push_back(new mxstream::MxData);
                 }
-                if(memx_status_error(status)){
-                    throw runtime_error("stream_ofmap failed, try resetting the MXA");              
+                proto_fmap.push_back(new mxstream::MxData);
+                OfmapRecv recv_obj(daemon_items_->model_stub_recv_,port_list,proto_fmap,uuid_);
+                grpc::Status status = recv_obj.Await();
+                if(!status.ok()){
+                    throw std::runtime_error("ofmap recv failed with: "+status.error_details());
                 }
+                _recv_wait(stream);
+                for (int i = 0; i < static_cast<int>(out_ports_.size()); ++i){
+                    const std::string data = proto_fmap[i]->fmap();
+                    memcpy(out_featuremaps_[stream][i]->get_formatted_data(),data.c_str(),data.size());
+                    delete proto_fmap[i];
+                }
+                delete proto_fmap[static_cast<int>(out_ports_.size())];
+                proto_fmap.clear();
             }
             //Specifing a specific recv stream thread that the ofmap is done
             out_featuremaps_[stream][0]->set_out_ready(false);
@@ -870,7 +930,7 @@ template<typename T>
 bool MxModel<T>::model_manual_send(std::vector<T *> in_data, int pstream_id, bool channel_first, int32_t timeout){
 
     if(stream_id_map_.find(pstream_id) == stream_id_map_.end()){
-        unique_lock lock(fm_create_mutex);
+        lock_guard lock(fm_create_mutex);
         if(stream_id_map_.find(pstream_id) == stream_id_map_.end()){
             int map_size = stream_id_map_.size();
             create_and_append_in_fm();
@@ -899,16 +959,40 @@ bool MxModel<T>::model_manual_send(std::vector<T *> in_data, int pstream_id, boo
     }
 
     {
-        unique_lock lock(manual_mutex_in);
+        lock_guard lock(manual_mutex_in);
         
         int context_to_send = open_contexts->at(context_send_current_index);
-        for(int i=0; i<this->model_info.num_in_featuremaps;i++){    
-            memx_status status;
-            status = memx_stream_ifmap(context_to_send, in_ports_[i], this->in_featuremaps_[stream_idx][i]->get_formatted_data(), timeout);
+        if(daemon_items_->model_stub_send_==NULL){
+            for(int i=0; i<this->model_info.num_in_featuremaps;i++){    
+                memx_status status;
+                status = memx_stream_ifmap(context_to_send, in_ports_[i], this->in_featuremaps_[stream_idx][i]->get_formatted_data(), timeout);
 
-            // if ifmap is success set in ready to true until next set_data is called to copy data from user
-            if(memx_status_error(status)){
-                throw runtime_error("stream_ifmap failed, try resetting the MXA");
+                // if ifmap is success set in ready to true until next set_data is called to copy data from user
+                if(memx_status_error(status)){
+                    throw runtime_error("stream_ifmap failed, try resetting the MXA");
+                }
+            }
+        }
+        else{
+            vector<mxstream::MxData*> fmap_list;
+            for (int i = 0; i < static_cast<int>(in_ports_.size()); ++i){
+                fmap_list.push_back(new mxstream::MxData);
+                fmap_list[i]->set_fmap(reinterpret_cast<const char*>(in_featuremaps_[stream_idx][i]->get_formatted_data()), in_featuremaps_[stream_idx][i]->get_formatted_size());
+                fmap_list[i]->set_port_id(in_ports_[i]);
+                fmap_list[i]->set_ctx_id(context_to_send);
+            }
+            mxstream::Ping reply;
+            IfmapSend sender(daemon_items_->model_stub_send_,fmap_list,&reply,uuid_,static_cast<int>(in_ports_.size()));
+            grpc::Status status = sender.Await();
+            for (int i = 0; i < static_cast<int>(in_ports_.size()); ++i){
+                delete fmap_list[i];
+            }
+            fmap_list.clear();
+            if(!status.ok()){
+                throw std::runtime_error("Grpc connection error for ifmap with: "+status.error_details());
+            }
+            if(!reply.recv()){
+                throw std::runtime_error(reply.msg());
             }
         }
         context_send_current_index = (context_send_current_index + 1) % number_of_contexts;
@@ -923,6 +1007,14 @@ bool MxModel<T>::model_manual_send(std::vector<T *> in_data, int pstream_id, boo
     return true;
 
 }
+template <typename T>
+void MxModel<T>::_manual_recv_wait(int stream_idx){
+    if(!out_featuremaps_[stream_idx][0]->get_out_ready())
+    {
+        std::unique_lock lock(*manual_recv_mutex[stream_idx]);
+        manual_recv_cv[stream_idx]->wait(lock);
+    }
+}
 
 template <typename T>
 void MxModel<T>::model_manual_recv_fun(){
@@ -935,27 +1027,57 @@ void MxModel<T>::model_manual_recv_fun(){
             int pstream_id = pop_data.first;
             int context_to_recv = pop_data.second;
             int stream_idx = stream_id_map_[pstream_id];
-            if(!out_featuremaps_[stream_idx][0]->get_out_ready())
-            {
-                std::unique_lock lock(*manual_recv_mutex[stream_idx]);
-                manual_recv_cv[stream_idx]->wait(lock);
-            }
-            if(!model_manual_run.load()){
-                return;
-            }
-            for (int i = 0; i < static_cast<int>(out_ports_.size()); ++i){
-
-                memx_status status;
-                status = memx_stream_ofmap(context_to_recv, out_ports_[i], this->out_featuremaps_[stream_idx][i]->get_formatted_data(), 0);
-
-                if(memx_status_error(status)){
-                    throw runtime_error("stream_ofmap failed, try resetting the MXA");              
+            if(daemon_items_->model_stub_recv_==NULL){
+                _manual_recv_wait(stream_idx);
+                if(!model_manual_run.load()){
+                    return;
                 }
+                for (int i = 0; i < static_cast<int>(out_ports_.size()); ++i){
+
+                    memx_status status;
+                    status = memx_stream_ofmap(context_to_recv, out_ports_[i], this->out_featuremaps_[stream_idx][i]->get_formatted_data(), 0);
+
+                    if(memx_status_error(status)){
+                        throw runtime_error("stream_ofmap failed, try resetting the MXA");              
+                    }
+                }
+            }
+            else{
+                mxstream::OfPorts port_list;
+                port_list.set_ctx_id(context_to_recv);
+                vector<mxstream::MxData*> proto_fmap;
+                for (int i = 0; i < static_cast<int>(out_ports_.size()); ++i){
+                    port_list.add_port_id(out_ports_[i]);
+                    port_list.add_size(out_featuremaps_[stream_idx][i]->get_formatted_size());
+                    proto_fmap.push_back(new mxstream::MxData);
+                }
+                proto_fmap.push_back(new mxstream::MxData);
+                OfmapRecv recv_obj(daemon_items_->model_stub_recv_,port_list,proto_fmap,uuid_);
+                grpc::Status status = recv_obj.Await();
+                if(!status.ok()){
+                    throw std::runtime_error("ofmap recv failed with: "+status.error_details());
+                }
+                _manual_recv_wait(stream_idx);
+                if(!model_manual_run.load()){
+                    for (int i = 0; i < static_cast<int>(out_ports_.size()); ++i){
+                        delete proto_fmap[i];
+                    }
+                    delete proto_fmap[static_cast<int>(out_ports_.size())];
+                    proto_fmap.clear();
+                    return;
+                }
+                for (int i = 0; i < static_cast<int>(out_ports_.size()); ++i){
+                    const std::string data = proto_fmap[i]->fmap();
+                    memcpy(out_featuremaps_[stream_idx][i]->get_formatted_data(),data.c_str(),data.size());
+                    delete proto_fmap[i];
+                }
+                delete proto_fmap[static_cast<int>(out_ports_.size())];
+                proto_fmap.clear();
             }
             //Specifing a specific recv stream thread that the ofmap is done
             out_featuremaps_[stream_idx][0]->set_out_ready(false);     
             {
-                std::unique_lock lock(*manual_recv_task_mutex[stream_idx]);
+                std::lock_guard lock(*manual_recv_task_mutex[stream_idx]);
                 manual_recv_task_cv[stream_idx]->notify_one();
             }
         }

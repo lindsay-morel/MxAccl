@@ -1,3 +1,66 @@
+memx-accl (1.1.0-13) stable; urgency=medium
+
+    * SDK 1.1 release
+
+ -- MemryX <no-reply@memryx.com>  Sun, 22 Dec 2024 00:00:00 -0500
+
+memx-accl (1.1.0-12) testing; urgency=medium
+
+    * track all locking in mx_server
+
+ -- MemryX <no-reply@memryx.com>  Thu, 19 Dec 2024 00:00:00 -0500
+
+memx-accl (1.1.0-11) testing; urgency=medium
+
+    * make heartbeats slower
+
+ -- MemryX <no-reply@memryx.com>  Wed, 18 Dec 2024 00:00:00 -0500
+
+memx-accl (1.1.0-10) testing; urgency=medium
+
+    * finally fixed Debian 11 / Ubuntu 20.04 support
+    * renamed the systemd service to 'mx-server' to match DevHub
+
+ -- MemryX <no-reply@memryx.com>  Tue, 17 Dec 2024 00:00:00 -0500
+
+memx-accl (1.1.0-9) testing; urgency=medium
+
+    * acclBench Shared Mode execution support
+
+ -- MemryX <no-reply@memryx.com>  Mon, 16 Dec 2024 00:00:00 -0500
+
+memx-accl (1.1.0-8) testing; urgency=medium
+
+    * Added heartbeat thread for clients even in local mode
+    * Bugfix for FP32 feature maps and no_copy
+
+ -- MemryX <no-reply@memryx.com>  Wed, 11 Dec 2024 00:00:00 -0500
+
+memx-accl (1.1.0-7) testing; urgency=medium
+
+    * mx_server port changes
+    * run daemon as non-root user
+
+ -- MemryX <no-reply@memryx.com>  Mon, 9 Dec 2024 00:00:00 -0500
+
+memx-accl (1.1.0-6) testing; urgency=medium
+
+    * don't require grpc headers
+
+ -- MemryX <no-reply@memryx.com>  Wed, 4 Dec 2024 00:00:00 -0500
+
+memx-accl (1.1.0-4) testing; urgency=medium
+
+    * daemon fixes
+
+ -- MemryX <no-reply@memryx.com>  Mon, 2 Dec 2024 00:00:00 -0500
+
+memx-accl (1.1.0-1) testing; urgency=medium
+
+    * SDK 1.1 series
+
+ -- MemryX <no-reply@memryx.com>  Mon, 18 Nov 2024 00:00:00 -0500
+
 memx-accl (1.0.1-1) stable; urgency=medium
 
     * 1.0.1: bugfix for MxAcclMT

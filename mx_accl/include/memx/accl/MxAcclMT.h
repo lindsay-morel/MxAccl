@@ -14,6 +14,7 @@
 #include <memx/accl/DeviceManager.h>
 
 using namespace std;
+struct daemon_items_mt;
 
 namespace MX
 {
@@ -24,9 +25,13 @@ namespace MX
       public:
 
       /**
-       * @brief MxAcclMT constructor. Takes no arguments.
+       * @brief MxAcclMT constructor
+       *  
+       * @param use_shared_mode This flag is 'false' by default, giving the MxAcclMT object direct control of the MXA. When set to 'true', MxAccl can be used in Shared mode which enables multiple processes on local (or remote) machines to share the MXA, with some potential performance penalty.
+       * @param server_ip Server IP to connect to represented as string. Default IP address is 127.0.0.1, which is localhost.
+       * @param server_port_base Starting port number as unsigned int, default is 10000. The server will use this port, **and** port+1 and port+2. For example, 10000, 10001, 10002.
        */
-      MxAcclMT();
+      MxAcclMT(bool use_shared_mode = false, std::string server_ip = "127.0.0.1", unsigned int server_port_base = 10000);
 
       /**
        * @brief Connect a dfp to MxAccl object. Currently only one connect_dfp per MxAccl object is allowed.
@@ -224,6 +229,21 @@ namespace MX
 
           MX::Runtime::DeviceManager *device_manager;
 
+          std::unique_ptr<daemon_items_mt> daemon_items_;
+          Dfp::DfpObject* dfp_=NULL;
+          void init_mx_models(std::vector<int>& device_ids_to_use);
+          int num_models_;
+          int num_chips_;
+          std::vector<int> device_ids_;
+          std::vector<int> context_ids_vector_;
+          char uuid_str[37];
+          std::vector<std::string> models_uuid;
+          std::thread* heartbeat_thread;
+          std::thread* local_heartbeat_thread;
+          void heartbeat_fun();
+          void local_heartbeat_fun();
+          std::atomic_bool heartbeat_run;
+          std::atomic_bool local_heartbeat_run;
 
     }; // MxAcclMT
   } // namespace Runtime

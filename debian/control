@@ -1,8 +1,8 @@
 Source: memx-accl
 Maintainer: MemryX <no-reply@memryx.com>
-Build-Depends: debhelper (>= 10), memx-drivers (>= 1.0.0), memx-drivers (<< 1.1.0)
+Build-Depends: debhelper (>= 10), memx-drivers (>= 1.1.0), memx-drivers (<< 1.2.0), libssl-dev, uuid-dev
 
 Package: memx-accl
 Architecture: amd64 arm64 riscv64
-Depends: memx-drivers (>= 1.0.0), memx-drivers (<< 1.1.0), ${shlibs:Depends}, ${misc:Depends}
+Depends: memx-drivers (>= 1.1.0), memx-drivers (<< 1.2.0), ${shlibs:Depends}, ${misc:Depends}
 Description: MemryX Runtime API library for C++

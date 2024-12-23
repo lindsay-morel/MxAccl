@@ -59,7 +59,7 @@ TEST(accl_user_tests, vector_connect_dfp_device_exception){
     }
     catch(std::runtime_error const & err)
     {
-        ASSERT_EQ(err.what(),std::string("Try using the available devices given above"));
+        ASSERT_EQ(err.what(),std::string("Device 10000 is not available to use"));
     }
     catch(...){
         GTEST_FAIL()<< "Expected Device exception";
@@ -109,7 +109,7 @@ TEST(accl_manual_user_tests, vector_connect_dfp_device_exception){
     }
     catch(std::runtime_error const & err)
     {
-        ASSERT_EQ(err.what(),std::string("Try using the available devices given above"));
+        ASSERT_EQ(err.what(),std::string("Device 10000 is not available to use"));
     }
     catch(...){
         GTEST_FAIL()<< "Expected Device exception";
@@ -162,7 +162,7 @@ TEST(accl_user_tests, multiple_processes){
     catch(std::runtime_error const & err)
     {
         std::cout<<err.what()<<std::endl;
-        ASSERT_EQ(err.what(),std::string("Cannot acquire lock on an available MXA device, device ID = 0"));
+        ASSERT_EQ(err.what(),std::string("Device 0 is not available to use"));
     }
     catch(...){
         GTEST_FAIL()<< "Expected group lock error";

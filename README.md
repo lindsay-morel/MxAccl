@@ -39,6 +39,7 @@ This repository contains the source code for the core `mx_accl` library and asso
 | -------------------------------------| ---------------------------------------------------------------------------------------------------------------------        |
 | `mx_accl`                            | Core MxAccl runtime library code
 | `mx_accl/tests`                      | Unit tests for MxAccl
+| `mx_server`                          | MX-Server daemon and config files
 | `tools`                              | Utilities like acclBench
 
 > **IMPORTANT**: For most users, we highly recommend using the prebuilt `memx-accl` package provided by the  [MemryX SDK](https://developer.memryx.com), as it simplifies development and ensures all dependencies are properly managed.
@@ -53,23 +54,51 @@ The **[MemryX Developer Hub](https://developer.memryx.com)** provides comprehens
 
 For advanced users who prefer to build the MxAccl library from source, follow these instructions:
 
-### Step 1: Clone the repository 
+### Step 1: Clone the repository
 
 ``` bash
 git clone https://github.com/memryx/MxAccl.git
 ```
 
-### Step 2: Build
+### Step 2: Build gRPC
+
+*Outside* your MxAccl folder, we need to build a static library version of gRPC.
+
+``` bash
+# clone and make build dirs
+git clone --recurse-submodules -b v1.68.2 --depth 1 --shallow-submodules https://github.com/grpc/grpc
+cd grpc
+mkdir cmake/build
+cd cmake/build
+
+# configure gRPC and set it to install to $HOME/grpc_inst
+cmake -DgRPC_INSTALL=ON -DgRPC_BUILD_TESTS=OFF -DgRPC_BUILD_GRPC_CSHARP_PLUGIN=OFF \
+  -DgRPC_BUILD_GRPC_NODE_PLUGIN=OFF -DgRPC_BUILD_GRPC_OBJECTIVE_C_PLUGIN=OFF \
+  -DgRPC_BUILD_GRPC_PHP_PLUGIN=OFF -DgRPC_BUILD_GRPC_RUBY_PLUGIN=OFF -DgRPC_BUILD_GRPC_PYTHON_PLUGIN=OFF \
+  -DCMAKE_INSTALL_PREFIX=$HOME/grpc_inst \
+  -DCMAKE_BUILD_TYPE=Release ../..
+
+# build (will take a while)
+make -j$(nproc)
+
+# install to $HOME/grpc_inst
+make install
+
+```
+
+### Step 3: Build MxAccl
 
 ```bash
 mkdir build && cd build
-cmake .. [-DBUILD_TYPE=[Debug | Release]]
+
+# must include the path to grpc_inst here
+PATH="$HOME/grpc_inst:$PATH" cmake .. [-DBUILD_TYPE=[Debug | Release]]
 make -j
    ```
 
 The above commands will build the MxAccl library, acclBench, and all unit tests.
 
-### Additional Dependancies
+### Additional Dependencies for Development
 
 * Gtest: Required for running the unit test suite. You can find it [here](https://github.com/google/googletest).
 
@@ -81,12 +110,23 @@ The above commands will build the MxAccl library, acclBench, and all unit tests.
 ### MxAccl
 The typical use of `MxAccl` is to integrate it directly into your C++ application to manage model inference on the MemryX MX3 accelerator. For complete documentation and detailed integration tutorials, visit the [MxAccl Documentation](https://developer.memryx.com/api/accelerator/accelerator.html) and [Tutorials Page](https://developer.memryx.com/tutorials/tutorials.html).
 
-To verify your setup, you can run the unit tests with the following command:
+#### mx_server
+Starting with the 1.1 release, the `mx_server` process must always be running, even if you're not using Shared mode, in order for the daemon to manage locks/access to connected MX3 devices.
+
+So before starting any tests or example apps, run the `mx_server` command in a separate terminal and leave it going.
+
+``` bash
+./mx_server/mx_server
+```
+
+
+Now to verify your setup, you can run the unit tests with the following command:
 
 ```bash
 cd build
 ctest
 ```
+
 
 ### acclBench
 
@@ -128,4 +168,4 @@ Enhance your experience with MemryX solutions by exploring the following resourc
 - **[MemryX SDK Installation Guide](https://developer.memryx.com/get_started/install.html):** Learn how to set up essential tools and drivers to start using MemryX accelerators.
 - **[Tutorials](https://developer.memryx.com/tutorials/tutorials.html):** Follow detailed, step-by-step instructions for various use cases and applications.
 - **[Model Explorer](https://developer.memryx.com/model_explorer/models.html):** Discover and explore models that have been compiled and optimized for MemryX accelerators.
-- **[Examples](https://github.com/memryx/MemryX_eXamples):** Explore a collection of end-to-end AI applications powered by MemryX hardware and software. 
+- **[Examples](https://github.com/memryx/MemryX_eXamples):** Explore a collection of end-to-end AI applications powered by MemryX hardware and software.

@@ -12,6 +12,9 @@ template <typename T>
 FeatureMap<T>::FeatureMap(size_t size, MX_data_format format,  uint16_t dim_h, uint16_t dim_w, uint16_t dim_z, size_t num_chan, int fmap_convert_threads)
 {
     fmap_data = new T[size];
+    fmap_data_internal = fmap_data;
+    transposed_fmap_data = new T[size];
+    transposed_fmap_data_internal = transposed_fmap_data;
     featureMap_size = size;
     fmt = format;
     fmap_convert_threads_ = fmap_convert_threads;
@@ -45,6 +48,9 @@ template <typename T>
 FeatureMap<T>::FeatureMap(T *in_data, size_t size, MX_data_format format,  uint16_t dim_h, uint16_t dim_w, uint16_t dim_z, size_t num_chan, int fmap_convert_threads)
 {
     fmap_data = new T[size];
+    fmap_data_internal = fmap_data;
+    transposed_fmap_data = new T[size];
+    transposed_fmap_data_internal = transposed_fmap_data;
     featureMap_size = size;
     std::memcpy(fmap_data, in_data, featureMap_size);
     fmt = format;
@@ -87,6 +93,9 @@ FeatureMap<T>::FeatureMap(const FeatureMap& rhs){
     fmap_convert_threads_ = rhs.fmap_convert_threads_;
     formatted_featuremap_size = rhs.formatted_featuremap_size;
     fmap_data = new T[featureMap_size];
+    fmap_data_internal = fmap_data;
+    transposed_fmap_data = new T[featureMap_size];
+    transposed_fmap_data_internal = transposed_fmap_data;
     std::memcpy(fmap_data, rhs.fmap_data, featureMap_size);
     if(fmt == MX_FMT_RGB888 || fmt == MX_FMT_FP32){
         formatted_data = (uint8_t*) fmap_data;
@@ -112,18 +121,31 @@ FeatureMap<T>& FeatureMap<T>::operator=(const FeatureMap& rhs){
     num_ch = rhs.num_ch;
     fmap_convert_threads_ = rhs.fmap_convert_threads_;
     formatted_featuremap_size = rhs.formatted_featuremap_size;
-    if(fmap_data != NULL){
-        delete[] fmap_data;
+    if(fmap_data_internal != NULL){
+        if(formatted_data == (uint8_t*) fmap_data_internal){
+            formatted_data = NULL;
+        }
+        delete[] fmap_data_internal;
         fmap_data = NULL;
+        fmap_data_internal = NULL;
     }
     fmap_data = new T[featureMap_size];
+    fmap_data_internal = fmap_data;
+    if(transposed_fmap_data_internal != NULL){
+        delete[] transposed_fmap_data_internal;
+        transposed_fmap_data = NULL;
+        transposed_fmap_data_internal = NULL;
+    }
+    transposed_fmap_data = new T[featureMap_size];
+    transposed_fmap_data_internal = transposed_fmap_data;
     std::memcpy(fmap_data, rhs.fmap_data, featureMap_size);
-    if(formatted_data != NULL && formatted_data != (uint8_t*) fmap_data){
+    std::memcpy(transposed_fmap_data, rhs.transposed_fmap_data, featureMap_size);
+    if(formatted_data != NULL && formatted_data != (uint8_t*) fmap_data_internal){
         delete[] formatted_data;
         formatted_data = NULL;
     }
     if(fmt == MX_FMT_RGB888 || fmt == MX_FMT_FP32){
-        formatted_data = (uint8_t*) fmap_data;
+        formatted_data = (uint8_t*) fmap_data_internal;
     } else {
         formatted_data = new uint8_t[formatted_featuremap_size];
         std::memcpy(formatted_data, rhs.formatted_data, formatted_featuremap_size);
@@ -143,13 +165,13 @@ void FeatureMap<T>::calc_convert_size_and_new()
         case MX_FMT_RGB888:
             // don't actually do anything
             formatted_featuremap_size = featureMap_size;
-            formatted_data = (uint8_t*) fmap_data;
+            formatted_data = (uint8_t*) fmap_data_internal;
             break;
         case MX_FMT_FP32:
             // plain old *4
             formatted_featuremap_size = featureMap_size * 4;
             // the cast from float to uint8 accounts for the *4 size
-            formatted_data = (uint8_t*) fmap_data;
+            formatted_data = (uint8_t*) fmap_data_internal;
             break;
         case MX_FMT_BF16:
             // extra padding item for odd-sized fmaps
@@ -303,6 +325,26 @@ void FeatureMap<T>::transpose_chw_hwc(T* input, T* output) const {
 }
 
 template<typename T>
+MX_status FeatureMap<T>::get_data_no_copy(T*& out_data, bool channel_first) const{
+
+    #pragma omp parallel if(fmap_convert_threads_ > 1) num_threads(fmap_convert_threads_)
+    {
+        if(fm_type==FM_DFP){
+            unconvert_data();   
+        }
+
+        if(channel_first){
+            this->transpose_hwc_chw(fmap_data, transposed_fmap_data);
+            out_data = transposed_fmap_data;
+        }
+        else{
+            out_data = fmap_data;
+        }
+    }
+    return MX_STATUS_OK;
+}
+
+template<typename T>
 T* FeatureMap<T>::get_data_ptr(){
     return fmap_data;
 }
@@ -376,10 +418,16 @@ void FeatureMap<T>::get_data_len(T *out_data, size_t data_len) const
 template <typename T>
 FeatureMap<T>::~FeatureMap()
 {
-    if (fmap_data != NULL)
+    if (fmap_data_internal != NULL)
     {
-        delete[] fmap_data;
-       fmap_data = NULL;
+        delete[] fmap_data_internal;
+        fmap_data_internal = NULL;
+        fmap_data = NULL;
+    }
+    if(transposed_fmap_data_internal != NULL){
+        delete[] transposed_fmap_data_internal;
+        transposed_fmap_data = NULL;
+        transposed_fmap_data_internal = NULL;
     }
     if (formatted_data != NULL)
     {

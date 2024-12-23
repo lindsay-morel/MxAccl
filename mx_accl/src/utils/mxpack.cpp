@@ -1,7 +1,6 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdarg.h>
-
 #include <memx/accl/utils/mxpack.h>
 
 
@@ -734,6 +733,35 @@ void mxpack_print_list(const mxpack_list_t *l, int il){
 
     il--;
     inprintf(il, "]\n");
+}
+
+uint8_t* dfpv6_extract_hw_dfp_bytes(const uint8_t *b, uint64_t& length){
+
+    if(b == NULL) return 0;
+
+    // make sure it's an mxpack dict
+    if(b[0] != 0x01) return 0;
+
+    mxpack_dict_t d;
+    size_t num_pbytes = 0;
+    num_pbytes = mxpack_process_dict(&d, b+1);
+    if(num_pbytes == 0) return 0;
+
+    // extract hw dfp
+    mxpack_binary_t *sdfp = (mxpack_binary_t*) mxpack_get_keyval(&d, "hw_dfp");
+    if(sdfp == NULL){
+        mxpack_free_dict(&d);
+        return 0;
+    }
+
+    // copy it so we can free the mxpack dict latewr
+    uint8_t* hwdfp = (uint8_t*) malloc(sdfp->length);
+    memcpy(hwdfp, sdfp->data, sdfp->length);
+    length = sdfp->length;
+    // free up and return ptr
+    mxpack_free_dict(&d);
+
+    return hwdfp;
 }
 
 
