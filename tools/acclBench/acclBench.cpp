@@ -107,9 +107,11 @@ static void print_usage(int argc, char **argv){
                       "-c | --convert_threads Number of feature map format conversion threads, default= " << num_fmap_convert_threads << "\n" << 
                       "-g | --group           Accerator group ID, default=" << grp_id << "\n" <<
                       "-f | --frames          Number of frame for testing inference performance, default=" << frame_count << " secs\n" <<
+                    #ifndef DISABLE_DAEMON
                       "-s | --server_addr     Address to mx_server (can be local or remote), default=" << default_server_addr << "\n" <<
                       "-p | --server_port     Base port for mx_server connection, default=" << server_port_base << "\n" <<
                       "-r | --shared_mode     Use Shared Mode (run DFP on mx_server instead of directly accessing hardware)\n" <<
+                    #endif
                       "-v | --verbose         print all the required logs\n" <<
                       "--max_fps              maximum allowed FPS per stream\n"<<
                       "--iw                   number of input pre-processing workers per model\n"<<
@@ -322,10 +324,12 @@ void print_bench_setting_info(){
         std::cout << "Number of output workers set to       = " << ((num_output_workers == 0 || num_output_workers > num_streams) ? num_streams : num_output_workers) <<"\n";
         std::cout << "Number of devices used                = " << num_devices << "\n";
         std::cout << "Number of FMap conversion threads     = " << num_fmap_convert_threads << "\n";
+      #ifndef DISABLE_DAEMON
         std::cout << "mx_server connection                  = " << server_addr << ":" << server_port_base << "\n";
         if(shared_mode){
             std::cout << "Shared mode                           = ON\n";
         }
+      #endif
 
 }
 
@@ -440,8 +444,6 @@ void model_bench(int num_models){
 }
 
 void send_data(int stream_label){
-        int sent_frame = 0; 
-
         while(sent_frame_count_vector[stream_label]  < frame_count && runflag.load()){
                 accl_mt->send_input(ifmap_vector[stream_label], model_info_vector[stream_label].model_index, stream_label, false);
                 sent_frame_count_vector[stream_label]++;
@@ -608,6 +610,7 @@ int main(int argc, char **argv)
                                 dfp_path = optarg;
                                 break;
 
+                      #ifndef DISABLE_DAEMON
                         case 's':
                                 server_addr = optarg;
                                 break;
@@ -622,6 +625,7 @@ int main(int argc, char **argv)
                         case 'r':
                                 shared_mode = true;
                                 break;
+                      #endif
 
                         case 'm':
                                 multi_stream_bench = true;
@@ -729,6 +733,7 @@ int main(int argc, char **argv)
                 std::cout << "*      Evaluate dfp performance using MX3       *\n";
                 std::cout << "*************************************************\033[m\n\n";
 
+              #ifndef DISABLE_DAEMON
                 // if the pointers aren't equal, user manually set server address
                 if( (server_addr != default_server_addr) || (server_port_base != 10000) || (shared_mode == true) ){
                     std::cout << "mx_server connection at " << server_addr << ":" << server_port_base << "\n";
@@ -738,6 +743,7 @@ int main(int argc, char **argv)
                         std::cout << "Mode: LOCAL\n\n";
                     }
                 }
+              #endif
 
                 runflag.store(true);
                 if(max_fps!=0){

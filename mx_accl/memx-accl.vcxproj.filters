@@ -45,51 +45,57 @@
     <ClCompile Include="src\utils\path.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="src\utils\general.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="include\memx\DeviceManager.h">
+    <ClInclude Include="include\memx\accl\dfp.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="include\memx\dfp.h">
+    <ClInclude Include="include\memx\accl\DeviceManager.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="include\memx\MxAccl.h">
+    <ClInclude Include="include\memx\accl\MxAccl.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="include\memx\MxAcclMT.h">
+    <ClInclude Include="include\memx\accl\MxAcclMT.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="include\memx\MxModel.h">
+    <ClInclude Include="include\memx\accl\MxModel.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="include\memx\prepost.h">
+    <ClInclude Include="include\memx\accl\prepost.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="include\memx\utils\errors.h">
+    <ClInclude Include="include\memx\accl\utils\errors.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="include\memx\utils\featureMap.h">
+    <ClInclude Include="include\memx\accl\utils\featureMap.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="include\memx\utils\gbf.h">
+    <ClInclude Include="include\memx\accl\utils\gbf.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="include\memx\utils\general.h">
+    <ClInclude Include="include\memx\accl\utils\general.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="include\memx\utils\mxpack.h">
+    <ClInclude Include="include\memx\accl\utils\mxpack.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="include\memx\utils\mxTypes.h">
+    <ClInclude Include="include\memx\accl\utils\mxTypes.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="include\memx\utils\path.h">
+    <ClInclude Include="include\memx\accl\utils\path.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="include\memx\utils\sync_queue.hpp">
+    <ClInclude Include="include\memx\accl\utils\sync_queue.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="include\memx\utils\thread_pool.hpp">
+    <ClInclude Include="include\memx\accl\utils\thread_pool.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="include\memx\accl\daemon.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

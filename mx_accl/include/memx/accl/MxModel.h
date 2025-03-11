@@ -233,6 +233,7 @@ namespace MX
 
             unique_ptr<model_daemon_items> daemon_items_;
             std::string uuid_;
+            void* ofmap_cq_daemon_;
             void _recv_wait(int stream);
             void _send_wait(int stream);
             void _manual_recv_wait(int stream);

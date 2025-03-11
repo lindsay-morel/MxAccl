@@ -1,8 +1,11 @@
 #include <fstream>
 #include <memx/accl/MxModel.h>
 #include <memx/accl/prepost.h>
+
+#ifndef DISABLE_DAEMON
 #include <memx/accl/daemon.h>
 #include "mx_proc.grpc.pb.h"
+#endif
 
 using namespace MX::Runtime;
 using namespace MX::Types;
@@ -14,11 +17,21 @@ template class MxModel<float>;
 #define VECTOR_INIT_BUFFER_LEN 500
 std::chrono::milliseconds INPUT_TASK_TIMEOUT = 500ms;
 
+#ifndef DISABLE_DAEMON
+using mxstream::MxService;
+using mxstream::MxData;
 struct model_daemon_items
 {
    mxstream::MxService::Stub* model_stub_send_;
    mxstream::MxService::Stub* model_stub_recv_;
 };
+#else
+struct model_daemon_items
+{
+   void* model_stub_send_;
+   void* model_stub_recv_;
+};
+#endif
 
 template <typename T>
 MxModel<T>::MxModel(int model_id, Dfp::DfpObject *dfp, const std::vector<int>* popen_contexts,
@@ -55,10 +68,17 @@ MxModel<T>::MxModel(int model_id, Dfp::DfpObject *dfp, const std::vector<int>* p
     context_send_current_index = 0;
     number_of_contexts = open_contexts->size();
     
+    //Initate the daemon specific items
     daemon_items_ = std::make_unique<model_daemon_items>();
+  #ifndef DISABLE_DAEMON
     daemon_items_->model_stub_send_ = (mxstream::MxService::Stub*)model_stub_send;
     daemon_items_->model_stub_recv_ = (mxstream::MxService::Stub*)model_stub_recv;
+  #else
+    daemon_items_->model_stub_send_ = NULL; 
+    daemon_items_->model_stub_recv_ = NULL;
+  #endif
     
+    //Setting up the model infro from dfp
     for(int ip = 0; ip<num_in_ports ; ++ip){
         int port_idx = in_ports_[ip];
         int64_t h = dfp_->input_port(port_idx)->dim_h;
@@ -89,8 +109,18 @@ MxModel<T>::MxModel(int model_id, Dfp::DfpObject *dfp, const std::vector<int>* p
         // std::cout<<"Out Layer Name = "<<dfp_->output_port(port_idx)->layer_name << "\n";
     }
     input_task_flag = true;
+  #ifndef DISABLE_DAEMON
+    ofmap_cq_daemon_ = (void*)new OfmapCq(daemon_items_->model_stub_recv_, uuid_);
+  #endif
 }
 
+/**
+ * Create and append the input featuremaps to the vector of input featuremaps
+ * 
+ * Each time this called, it allocates the input featuremaps and their transposed versions
+ * and appends them to the vector. If the pre-processing model is connected,
+ * it also allocates the input featuremaps for the pre-processing vector.
+ */
 template<typename T>
 void MxModel<T>::create_and_append_in_fm(){
     if(!pre_model_path.empty()){
@@ -131,6 +161,13 @@ void MxModel<T>::create_and_append_in_fm(){
     transposed_in_featuremaps_.push_back(temp_iv);
 }
 
+/**
+ * Create and append the output featuremaps to the vector of output featuremaps
+ * 
+ * Each time this called, it allocates the output featuremaps and their transposed versions
+ * and appends them to the vector. If the post-processing model is connected,
+ * it also allocates the output featuremaps for the post-processing vector.
+ */
 template<typename T>
 void MxModel<T>::create_and_append_out_fm(){
     vector<FeatureMap<float> *> temp_ov;
@@ -169,6 +206,21 @@ void MxModel<T>::create_and_append_out_fm(){
     }
 }
 
+/**
+ * Sets the post-processing model for the MxModel instance.
+ *
+ * This function configures the post-processing model by setting the path
+ * and output sizes. It initializes the post-info model using the specified
+ * post-processing path and size list. It then updates the model's output
+ * feature map information and checks for dynamic output sizes, throwing an
+ * error if necessary sizes are not provided. The function also matches
+ * the names of the model's output layers with the post-processing model.
+ *
+ * @param post_path Path to the post-processing model.
+ * @param post_out_sizelist Vector containing the output sizes for the
+ *                          post-processing model.
+ */
+
 template <typename T>
 void MxModel<T>::model_set_post(std::filesystem::path post_path, const std::vector<size_t>& post_out_sizelist){
     post_model_path_ = post_path;
@@ -190,7 +242,7 @@ void MxModel<T>::model_set_post(std::filesystem::path post_path, const std::vect
 
     post_model_info.num_out_featuremaps = post_info_model->get_output_sizes().size();
     for(int op = 0; op<post_model_info.num_out_featuremaps ; ++op){
-        if(post_out_size.size()==0){
+        if(post_out_size.size()==0){//Post model sizes are not given by the user so we get the sizes from post info
             std::vector<int64_t>output_shape = post_info_model->get_output_shapes()[op];
             MX::Types::ShapeVector featureMap_shape(static_cast<int>(output_shape.size()));
             for(int i=0 ;i < static_cast<int>(output_shape.size()); ++i){
@@ -206,6 +258,9 @@ void MxModel<T>::model_set_post(std::filesystem::path post_path, const std::vect
         }
     }
 
+    //In the case of dfp output and post inputs not matching in terms of order or number, we find the matching and 
+    //for the direct outputs from the dfp that are not inputs to the post-model, we keep their names so that
+    //they can later be appended to the post-model outputs. 
     for(int i=0; i<(int)post_info_model->real_featuremaps.size(); ++i){
         post_model_info.num_out_featuremaps++;
         if(post_info_model->type == Plugin_Onnx)
@@ -217,6 +272,14 @@ void MxModel<T>::model_set_post(std::filesystem::path post_path, const std::vect
     }
 }
 
+/**
+ * @brief Connects a pre-processing model to the current model.
+ *
+ * Given a pre-processing model path, this function connects the model to the
+ * current model.
+ *
+ * @param pre_path Path to the pre-processing model.
+ */
 template <typename T>
 void MxModel<T>::model_set_pre(std::filesystem::path pre_path){
     pre_model_path = pre_path;
@@ -239,6 +302,9 @@ void MxModel<T>::model_set_pre(std::filesystem::path pre_path){
     pre_model_info.out_featuremap_sizes = model_info.in_featuremap_sizes;
     pre_model_info.output_layer_names = model_info.input_layer_names;
 
+    //In the case of dfp input and pre outputs not matching in terms of order or number, we find the matching and 
+    //for the direct inputs to the dfp that are not outputs of the pre-model, we keep their names so that
+    //they can later be appended to the MxModel inputs. 
     for(int i=0; i<(int)pre_info_model->real_featuremaps.size(); ++i){
         pre_model_info.num_in_featuremaps++;
         if(pre_info_model->type == Plugin_Onnx)
@@ -268,6 +334,14 @@ void MxModel<T>::set_parallel_fmap_convert(int num_threads){
     }
 }        
 
+/**
+ * This function starts the model by allocating the required memory, creating
+ * and starting the model threads, and setting the corresponding flags to
+ * true.
+ *
+ * @note This function should be called after the model has been set up and
+ * before any inference calls.
+ */
 template <typename T>
 void MxModel<T>::model_start(){
 
@@ -311,15 +385,19 @@ void MxModel<T>::model_start(){
         std::cout<<"Warning!! Output number of workers are set to be more than number of streams. \
                                 \n Default mode is activated and num workers is set to num streams"<<std::endl;
     }
+
+    //Creating thread pools
     input_pool = new thread_pool("input_pool", input_num_workers_,true,num_streams_);
     output_pool = new thread_pool("output_pool",output_num_workers_,false,num_streams_);
 
+    //Creating num_streams_ number of input tasks for each stream
     for(int i = 0; i<num_streams_; ++i){
         vector<const FeatureMap<T>*> temp(in_featuremaps_[i].begin(),in_featuremaps_[i].end());
         input_pool->submitTask(&MxModel<T>::inputTask,this,comb_in_call[i],std::move(temp),std::move(i),stream_id_list[i]);
     }
 }
 
+//Helper function that copies user input to apt internal featuremap as will be used both in manual and auto functions.
 template <typename T>
 void MxModel<T>::_pre_copy(int stream){
     if(pre_model[stream]->type==Plugin_Onnx){
@@ -334,10 +412,11 @@ void MxModel<T>::_pre_copy(int stream){
     }
 }
 
+//Helper function that runs the inference on the pre-processing model
 template <typename T>
 void MxModel<T>::_pre_inference(int stream){
     vector<FeatureMap<T>*> premuted_output;
-    if(pre_model[stream]->type==Plugin_Onnx){
+    if(pre_model[stream]->type==Plugin_Onnx){//In case of onnx we perform NCHW->NHWC conversion
         for(int i =0;i<(int)pre_info_model->dfp_pattern.size();++i){
             premuted_output.push_back(transposed_in_featuremaps_[stream][pre_info_model->dfp_pattern[i]]);
         }
@@ -354,6 +433,7 @@ void MxModel<T>::_pre_inference(int stream){
 }
 
 
+//Helper function that runs the inference on the post-processing model
 template <typename T>
 void MxModel<T>::_post_inference(int stream){
     std::vector<FeatureMap<float>* > premuted_output;
@@ -361,7 +441,7 @@ void MxModel<T>::_post_inference(int stream){
         for(int i=0; i< model_info.num_out_featuremaps; ++i){
             out_featuremaps_[stream][i]->get_data(transposed_out_featuremaps_[stream][i]->get_data_ptr(),true);
         }
-        if(post_model[stream]->dynamic_output){
+        if(post_model[stream]->dynamic_output){//In case of dynamic output we initiate the data with zeros as it is possible that the actual output is smaller than allocated featuremap
             for(int m =0 ;m < static_cast<int>(post_out_size.size());++m)
             memset(post_out_featuremaps_[stream][m]->get_data_ptr(),0,post_out_size[m]*sizeof(float));
         }
@@ -389,6 +469,7 @@ void MxModel<T>::_post_inference(int stream){
     }
 }
 
+//The actual task sent to input threadpools
 template <typename T>
 bool MxModel<T>::inputTask(combined_input_callback_t in_cb, vector<const FeatureMap<T>* >inputs,int stream, int stream_idx){
     if(in_featuremaps_[stream][0]->get_in_ready()){
@@ -403,12 +484,15 @@ bool MxModel<T>::inputTask(combined_input_callback_t in_cb, vector<const Feature
             send_flag = in_cb(inputs,stream_idx);
         }
 
+        //Once the input callback is done, set the in_ready flag to false so that next inference is blocked on this stream
+        //till MPU inference is done 
         in_featuremaps_[stream][0]->set_in_ready(false);
         if(!send_flag){
             return false;
         }
         stream_queue.push(stream);
-        input_thread_counter--;
+        input_thread_counter--;//Decrement the input thread counter so that new tasks can be sent to the input threadpool
+        //till there is a free worker.
         {
             std::lock_guard lock(input_task_mutex);
             input_task_flag = true;
@@ -418,11 +502,12 @@ bool MxModel<T>::inputTask(combined_input_callback_t in_cb, vector<const Feature
     else{
         std::unique_lock lock(input_thread_mutex);
         auto now = std::chrono::steady_clock::now();
-        input_thread_cv.wait_until(lock,now+INPUT_TASK_TIMEOUT,[this]() { return (this->input_thread_counter.load()>0); });
+        input_thread_cv.wait_until(lock,now+INPUT_TASK_TIMEOUT,[this]() { return (this->input_thread_counter.load()>0); }); //Wait for model thread to be done
     }
     return true;
 }
 
+//The actual task sent to output threadpools
 template <typename T>
 bool MxModel<T>::outputTask(combined_output_callback_t out_cb, vector<const FeatureMap<float>* >outputs,int stream, int stream_idx){
     if(!post_model_path_.empty()){
@@ -437,6 +522,7 @@ bool MxModel<T>::outputTask(combined_output_callback_t out_cb, vector<const Feat
         out_cb(outputs,stream_idx);
     }    
     {
+        //Once the output callback is done, set the out_ready flag to true so that next inference will start in model_recv_thread on this stream
         std::lock_guard<std::mutex> lock(*out_task_mutex[stream]);
         out_featuremaps_[stream][0]->set_out_ready(true);
     }
@@ -739,13 +825,13 @@ void MxModel<T>::_send_wait(int stream){
     in_featuremaps_[stream][0]->set_in_ready(true);
     std::lock_guard lock(input_thread_mutex);
     input_thread_counter++;
+    //Notifying all the input workers waiting so they can perform input callback accordingly
     input_thread_cv.notify_all();
 }
  
 template <typename T>
 void MxModel<T>::model_send_fun()
 {
-
     //Run till model is running or there are streams left to send to ifmap
     while (model_run.load() || stream_queue.size()>0)
     {
@@ -758,14 +844,16 @@ void MxModel<T>::model_send_fun()
                 int context_to_send = open_contexts->at(context_send_current_index);
 
                 if(daemon_items_->model_stub_send_==NULL){
+                    //Sending inputs to MPU in local mode
                     for (int i = 0; i < static_cast<int>(in_ports_.size()); ++i)
                     {                         
-                        // int timeout = (i == 0)? 1 : 0;
                         send_status = memx_stream_ifmap(context_to_send , in_ports_[i], in_featuremaps_[stream][i]->get_formatted_data(), 0);
                     }
                 }
 
+              #ifndef DISABLE_DAEMON
                 else{
+                    //Sending inputs to MPU in shared mode
                     vector<mxstream::MxData*> fmap_list;
                     for (int i = 0; i < static_cast<int>(in_ports_.size()); ++i){
                         fmap_list.push_back(new mxstream::MxData);
@@ -773,8 +861,10 @@ void MxModel<T>::model_send_fun()
                         fmap_list[i]->set_port_id(in_ports_[i]);
                         fmap_list[i]->set_ctx_id(context_to_send);
                     }
-                    _send_wait(stream);
+                    _send_wait(stream);//We notify the stream for next input callback as soon as we copy the featuremap to gRPC buffer. This reduces the wait time as we're not waiting 
+                    //for the completion of the gRPC call
                     mxstream::Ping reply;
+                    //The actual gRPC call
                     IfmapSend sender(daemon_items_->model_stub_send_,fmap_list,&reply,uuid_,static_cast<int>(in_ports_.size()));
                     grpc::Status status = sender.Await();
                     for (int i = 0; i < static_cast<int>(in_ports_.size()); ++i){
@@ -789,6 +879,7 @@ void MxModel<T>::model_send_fun()
                     }
                     send_status = MEMX_STATUS_OK;
                 }
+              #endif
                 
                 //update context_id every iteration
                 context_send_current_index = (context_send_current_index + 1) % number_of_contexts;
@@ -807,6 +898,7 @@ void MxModel<T>::model_send_fun()
             }    
         }
         else{
+            //Wait for one of the streams to notify that they're done with input callback
             std::unique_lock lock(input_task_mutex);
             input_task_cv.wait(lock,[this]() { return ((this->input_task_flag||!this->model_run.load())); });
             input_task_flag = false;
@@ -838,7 +930,7 @@ void MxModel<T>::model_recv_fun()
             int stream = pop_data.first;
             int context_to_recv = pop_data.second;
             if(daemon_items_->model_stub_recv_==NULL){
-                _recv_wait(stream);
+                _recv_wait(stream);//If the output callback on this stream is not done, wait fot it to be done
                 for (int i = 0; i < static_cast<int>(out_ports_.size()); ++i)
                 {
                     memx_status status;
@@ -850,6 +942,7 @@ void MxModel<T>::model_recv_fun()
                     }
                 }
             }
+          #ifndef DISABLE_DAEMON
             else{
                 mxstream::OfPorts port_list;
                 port_list.set_ctx_id(context_to_recv);
@@ -860,20 +953,24 @@ void MxModel<T>::model_recv_fun()
                     proto_fmap.push_back(new mxstream::MxData);
                 }
                 proto_fmap.push_back(new mxstream::MxData);
-                OfmapRecv recv_obj(daemon_items_->model_stub_recv_,port_list,proto_fmap,uuid_);
-                grpc::Status status = recv_obj.Await();
+                OfmapCq* local_obj =  (OfmapCq*)ofmap_cq_daemon_;
+                grpc::Status status = grpc::Status(grpc::StatusCode::NOT_FOUND, "Top of the queue not equal");
+                while(status.error_code()==grpc::StatusCode::NOT_FOUND){
+                    status = local_obj->get_ofmaps(port_list,proto_fmap);//The actual gRPC call
+                }
                 if(!status.ok()){
                     throw std::runtime_error("ofmap recv failed with: "+status.error_details());
                 }
-                _recv_wait(stream);
+                _recv_wait(stream);//Start waiting after performing the grpc call as this reduces the wait time
                 for (int i = 0; i < static_cast<int>(out_ports_.size()); ++i){
                     const std::string data = proto_fmap[i]->fmap();
                     memcpy(out_featuremaps_[stream][i]->get_formatted_data(),data.c_str(),data.size());
                     delete proto_fmap[i];
                 }
-                delete proto_fmap[static_cast<int>(out_ports_.size())];
+                delete proto_fmap.back();
                 proto_fmap.clear();
             }
+          #endif
             //Specifing a specific recv stream thread that the ofmap is done
             out_featuremaps_[stream][0]->set_out_ready(false);
             vector<const FeatureMap<float>*> temp(out_featuremaps_[stream].begin(),out_featuremaps_[stream].end());
@@ -899,6 +996,9 @@ MxModel<T>::~MxModel()
     else if(model_manual_run.load()){
         this->model_manual_stop();
     }
+  #ifndef DISABLE_DAEMON
+    delete (OfmapCq*)ofmap_cq_daemon_;
+  #endif
 }
 
 template <typename T>
@@ -930,8 +1030,10 @@ template<typename T>
 bool MxModel<T>::model_manual_send(std::vector<T *> in_data, int pstream_id, bool channel_first, int32_t timeout){
 
     if(stream_id_map_.find(pstream_id) == stream_id_map_.end()){
+        //Check if this call belongs to a new stream or an existing stream
         lock_guard lock(fm_create_mutex);
         if(stream_id_map_.find(pstream_id) == stream_id_map_.end()){
+            //Create and store all the required feature maps and model objects
             int map_size = stream_id_map_.size();
             create_and_append_in_fm();
             create_and_append_out_fm();
@@ -973,6 +1075,7 @@ bool MxModel<T>::model_manual_send(std::vector<T *> in_data, int pstream_id, boo
                 }
             }
         }
+      #ifndef DISABLE_DAEMON
         else{
             vector<mxstream::MxData*> fmap_list;
             for (int i = 0; i < static_cast<int>(in_ports_.size()); ++i){
@@ -995,6 +1098,7 @@ bool MxModel<T>::model_manual_send(std::vector<T *> in_data, int pstream_id, boo
                 throw std::runtime_error(reply.msg());
             }
         }
+      #endif
         context_send_current_index = (context_send_current_index + 1) % number_of_contexts;
         pair_stream_context_queue.push(std::make_pair(pstream_id, context_to_send));
     }
@@ -1003,6 +1107,7 @@ bool MxModel<T>::model_manual_send(std::vector<T *> in_data, int pstream_id, boo
         std::lock_guard model_manual_send_lock(manual_mutex);
         model_manual_in_done = true;
     }
+    //Notify the model_manual_recv thread
     model_manual_cv.notify_one();
     return true;
 
@@ -1042,6 +1147,7 @@ void MxModel<T>::model_manual_recv_fun(){
                     }
                 }
             }
+          #ifndef DISABLE_DAEMON
             else{
                 mxstream::OfPorts port_list;
                 port_list.set_ctx_id(context_to_recv);
@@ -1052,11 +1158,15 @@ void MxModel<T>::model_manual_recv_fun(){
                     proto_fmap.push_back(new mxstream::MxData);
                 }
                 proto_fmap.push_back(new mxstream::MxData);
-                OfmapRecv recv_obj(daemon_items_->model_stub_recv_,port_list,proto_fmap,uuid_);
-                grpc::Status status = recv_obj.Await();
+                OfmapCq* local_obj =  (OfmapCq*)ofmap_cq_daemon_;
+                grpc::Status status = grpc::Status(grpc::StatusCode::NOT_FOUND, "Top of the queue not equal");
+                while(status.error_code()==grpc::StatusCode::NOT_FOUND){
+                    status = local_obj->get_ofmaps(port_list,proto_fmap);
+                }
                 if(!status.ok()){
                     throw std::runtime_error("ofmap recv failed with: "+status.error_details());
                 }
+                //Wait for the manual_recv function to notify
                 _manual_recv_wait(stream_idx);
                 if(!model_manual_run.load()){
                     for (int i = 0; i < static_cast<int>(out_ports_.size()); ++i){
@@ -1074,15 +1184,18 @@ void MxModel<T>::model_manual_recv_fun(){
                 delete proto_fmap[static_cast<int>(out_ports_.size())];
                 proto_fmap.clear();
             }
+          #endif
             //Specifing a specific recv stream thread that the ofmap is done
             out_featuremaps_[stream_idx][0]->set_out_ready(false);     
             {
+                //Noify the model_manual_recv function to perform the next steps
                 std::lock_guard lock(*manual_recv_task_mutex[stream_idx]);
                 manual_recv_task_cv[stream_idx]->notify_one();
             }
         }
         else{
             {
+                //Wait for the model_manual_send function to notify
                 std::unique_lock lock(manual_mutex);
                 model_manual_cv.wait(lock,[this]() { return  this->model_manual_in_done || !model_manual_run.load(); });
                 model_manual_in_done = false;
@@ -1095,6 +1208,7 @@ template<typename T>
 bool MxModel<T>::model_manual_receive(std::vector<float*> &out_data, int pstream_id, bool channel_first, int32_t timeout){
     int stream_idx = 0;
     while(stream_id_map_.find(pstream_id) == stream_id_map_.end()){
+        //Wait till input is sent to this particular stream or timeout
         std::unique_lock lock(manual_init_mutex);
         if(timeout>0){
             auto cv_timeout = std::chrono::system_clock::now() + std::chrono::seconds(timeout);
@@ -1105,12 +1219,14 @@ bool MxModel<T>::model_manual_receive(std::vector<float*> &out_data, int pstream
         else{
             manual_init_cv.wait(lock,[this, pstream_id]{return stream_id_map_.find(pstream_id) != stream_id_map_.end();});
         }
+        //Sanity sleep
         std::this_thread::sleep_for(10us);
     }
     stream_idx = stream_id_map_[pstream_id];
     std::chrono::milliseconds timeout_ms(timeout);
     if(out_featuremaps_[stream_idx][0]->get_out_ready()){
         std::unique_lock lock(*(manual_recv_task_mutex[stream_idx]));
+        //Wait till MPU inference of this specific stream is done or return false if timedout
         if(timeout>0){
             if(!manual_recv_task_cv[stream_idx]->wait_for(lock,timeout_ms,[this,stream_idx] { return !this->out_featuremaps_[stream_idx][0]->get_out_ready(); }))
             return false;

@@ -512,6 +512,24 @@ int DfpObject::__load_dfp_bytes(const uint8_t *b){
             return -1;
         }
 
+
+        //---------------------------------------------------//
+        //----------- TODO: REMOVE IN SDK 1.3 ---------------//
+        //---------------------------------------------------//
+        // check for 1.2 compatibility
+        bool *p12_compat = (bool*) mxpack_get_keyval(&d, "1p2_compatible");
+        
+        if(p12_compat != NULL){ // non-existent means SDK 1.1, and thus compatible
+            if(*p12_compat == false){
+                throw(std::runtime_error("This DFP uses an incompatible feature from SDK 1.3. Please upgrade your runtime to version 1.3 or higher in order to use this DFP."));
+                return -1;
+            }
+        }
+        //---------------------------------------------------//
+        //---------------------------------------------------//
+        //---------------------------------------------------//
+
+
         // num MXAs
         meta.num_chips = *( (uint8_t*) mxpack_get_keyval(tempd, "num_mpus") );
 

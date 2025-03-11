@@ -20,28 +20,28 @@
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>17.0</VCProjectVersion>
-    <ProjectGuid>{6DE13FB8-6E7C-4A60-8418-7BF6AF5106EF}</ProjectGuid>
+    <ProjectGuid>{82FCA772-84A0-464A-B5FC-01E6614D472F}</ProjectGuid>
     <Keyword>Win32Proj</Keyword>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'" Label="Configuration">
-    <ConfigurationType>StaticLibrary</ConfigurationType>
+    <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>true</UseDebugLibraries>
     <PlatformToolset>v143</PlatformToolset>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
-    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
     <PlatformToolset>v143</PlatformToolset>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
-    <ConfigurationType>StaticLibrary</ConfigurationType>
+    <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>true</UseDebugLibraries>
     <PlatformToolset>v143</PlatformToolset>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
-    <ConfigurationType>DynamicLibrary</ConfigurationType>
+    <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
     <PlatformToolset>v143</PlatformToolset>
   </PropertyGroup>
@@ -77,100 +77,70 @@
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
     <ClCompile>
-      <PreprocessorDefinitions>WIN32;_DEBUG;_LIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WIN32;_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <WarningLevel>Level3</WarningLevel>
     </ClCompile>
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <SubSystem>Windows</SubSystem>
+      <SubSystem>Console</SubSystem>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <ClCompile>
-      <PreprocessorDefinitions>_DEBUG;_LIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <WarningLevel>Level3</WarningLevel>
+      <AdditionalIncludeDirectories>..\..\mx_accl\include;..\..\driver\binary_release\windows_driver\udriver\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <SubSystem>Windows</SubSystem>
+      <SubSystem>Console</SubSystem>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <ClCompile>
-      <PreprocessorDefinitions>WIN32;NDEBUG;_LIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <WarningLevel>TurnOffAllWarnings</WarningLevel>
       <LanguageStandard>stdcpp17</LanguageStandard>
-      <AdditionalIncludeDirectories>..\driver\binary_release\windows_driver\udriver\include;include</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\..\mx_accl\include;..\..\driver\binary_release\windows_driver\udriver\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <SubSystem>Windows</SubSystem>
+      <SubSystem>Console</SubSystem>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
-      <AdditionalLibraryDirectories>../driver\binary_release\windows_driver\udriver;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>udriver.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>..\..\mx_accl\x64\Release;..\..\driver\binary_release\windows_driver\udriver;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>memx-accl.lib;udriver.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
-    <ProjectReference>
-      <UseLibraryDependencyInputs>true</UseLibraryDependencyInputs>
-    </ProjectReference>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
-      <PreprocessorDefinitions>NDEBUG;_LIB;DISABLE_DAEMON;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <WarningLevel>TurnOffAllWarnings</WarningLevel>
       <LanguageStandard>stdcpp17</LanguageStandard>
-      <AdditionalIncludeDirectories>..\driver\binary_release\windows_driver\udriver\include;include;</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\..\mx_accl\include;..\..\driver\binary_release\windows_driver\udriver\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <SubSystem>Windows</SubSystem>
+      <SubSystem>Console</SubSystem>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
-      <AdditionalLibraryDirectories>..\driver\binary_release\windows_driver\udriver;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>udriver.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>..\..\mx_accl\x64\Release;..\..\driver\binary_release\windows_driver\udriver;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>memx-accl.lib;udriver.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
-    <ProjectReference>
-      <UseLibraryDependencyInputs>true</UseLibraryDependencyInputs>
-    </ProjectReference>
     <PostBuildEvent>
-      <Command>lib /OUT:"$(OutDir)memx-accl.lib" $(IntDir)*.obj
-copy /Y "$(OutDir)memx-accl.lib" $(OutDir)..\..\..\samples\acclBench
-</Command>
+      <Command>copy /Y "$(ProjectDir)..\..\mx_accl\x64\Release\memx-accl.dll" $(OutDir)
+copy /Y "$(ProjectDir)..\..\driver\binary_release\windows_driver\udriver\udriver.dll" $(OutDir)
+xcopy /E /I /Y "$(ProjectDir)..\..\mx_accl\include" $(OutDir)include
+copy /Y "$(ProjectDir)..\..\driver\binary_release\windows_driver\udriver\include\memx\memx.h" $(OutDir)include\memx\  </Command>
     </PostBuildEvent>
-    <Lib>
-      <Name>$(OutDir)memx-accl.lib</Name>
-    </Lib>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="src\DeviceManager.cpp" />
-    <ClCompile Include="src\dfp.cpp" />
-    <ClCompile Include="src\MxAccl.cpp" />
-    <ClCompile Include="src\MxAcclMT.cpp" />
-    <ClCompile Include="src\MxModel.cpp" />
-    <ClCompile Include="src\prepost.cpp" />
-    <ClCompile Include="src\utils\featureMap.cpp" />
-    <ClCompile Include="src\utils\general.cpp" />
-    <ClCompile Include="src\utils\mxpack.cpp" />
-    <ClCompile Include="src\utils\mxTypes.cpp" />
-    <ClCompile Include="src\utils\path.cpp" />
+    <ClCompile Include="acclBench.cpp" />
+    <ClCompile Include="windows\getopt.c" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="include\memx\accl\daemon.h" />
-    <ClInclude Include="include\memx\accl\DeviceManager.h" />
-    <ClInclude Include="include\memx\accl\dfp.h" />
-    <ClInclude Include="include\memx\accl\MxAccl.h" />
-    <ClInclude Include="include\memx\accl\MxAcclMT.h" />
-    <ClInclude Include="include\memx\accl\MxModel.h" />
-    <ClInclude Include="include\memx\accl\prepost.h" />
-    <ClInclude Include="include\memx\accl\utils\errors.h" />
-    <ClInclude Include="include\memx\accl\utils\featureMap.h" />
-    <ClInclude Include="include\memx\accl\utils\gbf.h" />
-    <ClInclude Include="include\memx\accl\utils\general.h" />
-    <ClInclude Include="include\memx\accl\utils\mxpack.h" />
-    <ClInclude Include="include\memx\accl\utils\mxTypes.h" />
-    <ClInclude Include="include\memx\accl\utils\path.h" />
-    <ClInclude Include="include\memx\accl\utils\sync_queue.hpp" />
-    <ClInclude Include="include\memx\accl\utils\thread_pool.hpp" />
+    <ClInclude Include="..\..\mx_accl\include\memx\accl\MxAccl.h" />
+    <ClInclude Include="..\..\mx_accl\include\memx\accl\MxAcclMT.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

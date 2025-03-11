@@ -3,23 +3,28 @@
 #include <sstream>
 #include <fstream>
 
+#ifndef DISABLE_DAEMON
 #include <grpcpp/grpcpp.h>
 #include "mx_proc.grpc.pb.h"
+#endif
 
 using namespace MX::Runtime;
 using namespace MX::Types;
 using namespace MX::Utils;
 using namespace std;
+
+#ifndef DISABLE_DAEMON
 using mxstream::MxService;
 using mxstream::LockData;
 using mxstream::Ping;
+#endif
 
-DeviceManager::DeviceManager(void* stub, bool server_mode){    
+DeviceManager::DeviceManager(void* stub, bool server_mode):stub_(stub){
+    
     all_devices_count = 0;
     required_devices = 0;
 
     server_mode_ = server_mode;
-    stub_ = stub;
     // let' get all devices and manage them
     // this->get_available_devices();
 }
@@ -82,12 +87,13 @@ mx_retval_t DeviceManager::opendfp(const std::filesystem::path dfp_filename, int
 
 mx_retval_t DeviceManager::try_lock(int grp_id){
     mx_retval_t ret;
+  #ifndef DISABLE_DAEMON
     if(stub_!=NULL){
-        mxstream::MxService::Stub* local_stub = (mxstream::MxService::Stub*)stub_;
         LockData request;
         request.set_group_id(grp_id);
         Ping reply;
         grpc::ClientContext context;
+        mxstream::MxService::Stub* local_stub = (mxstream::MxService::Stub*)stub_;
         grpc::Status status_ = local_stub->try_lock(&context, request, &reply);
         if (!status_.ok()) {
             ret.error_flag = false;
@@ -98,6 +104,7 @@ mx_retval_t DeviceManager::try_lock(int grp_id){
         if(!ret.error_flag) ret.error_msg = "Couldn't acquire lock on device "+std::to_string(grp_id);
         return ret;
     }
+  #endif
     if(server_mode_){
         ret.error_flag = true;
     } else {
@@ -514,12 +521,13 @@ void DeviceManager::cleanup__all_dfps(){
 
 mx_retval_t DeviceManager::device_unlock(int device_id){
     mx_retval_t unlock_ret(true);
+  #ifndef DISABLE_DAEMON
     if(stub_!=NULL){
-        mxstream::MxService::Stub* local_stub = (mxstream::MxService::Stub*)stub_;
         grpc::ClientContext ctx;
         Ping reply;
         LockData lck_data;
         lck_data.set_group_id(device_id);
+        mxstream::MxService::Stub* local_stub = (mxstream::MxService::Stub*)stub_;
         grpc::Status status = local_stub->unlock(&ctx,lck_data,&reply);
         if(!status.ok()){
             unlock_ret.error_flag = false;
@@ -530,6 +538,7 @@ mx_retval_t DeviceManager::device_unlock(int device_id){
         if(!unlock_ret.error_flag) unlock_ret.error_msg = "Daemon unlock failed on device: "+std::to_string(device_id);
         return unlock_ret;
     }
+  #endif
     if(server_mode_){
         unlock_ret.error_flag = true;
     } else {

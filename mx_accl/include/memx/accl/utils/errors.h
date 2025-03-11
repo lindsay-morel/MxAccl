@@ -5,7 +5,7 @@ namespace MX
 {
     namespace Utils
     {
-        enum MX_status
+        enum MEMX_API_EXPORT MX_status
         {
             MX_STATUS_OK = 0,
             MX_STATUS_TIMEOUT = 1,

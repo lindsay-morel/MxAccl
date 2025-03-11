@@ -7,6 +7,9 @@
 #include <vector>
 #include <condition_variable>
 
+/**
+ * gRPC callback API implementation for sending ifmap to the daemon
+ */
 class IfmapSend : public grpc::ClientWriteReactor<mxstream::MxData> {
     public:
         IfmapSend(mxstream::MxService::Stub* stub, std::vector<mxstream::MxData*>& ifmap_grpc, mxstream::Ping* response, std::string uuid, int num_ports);
@@ -30,25 +33,18 @@ class IfmapSend : public grpc::ClientWriteReactor<mxstream::MxData> {
         void NextWrite();
 };
 
-class OfmapRecv : public grpc::ClientReadReactor<mxstream::MxData> {
+/**
+ * gRPC completion-queue API implementation for receivingm ofmap from the daemon
+ */
+class OfmapCq{
     public:
-        OfmapRecv(mxstream::MxService::Stub* stub, mxstream::OfPorts& port_list, std::vector<mxstream::MxData*>& ofmap_grpc, std::string uuid);
-
-        void OnReadDone(bool ok) override;
-
-        void OnDone(const grpc::Status& s) override; 
-
-        grpc::Status Await();
+     explicit OfmapCq(mxstream::MxService::Stub* stub, std::string uuid);
+     
+     grpc::Status get_ofmaps(mxstream::OfPorts& port_list, std::vector<mxstream::MxData*>& ofmap_grpc);
 
     private:
-        grpc::ClientContext context_;
-        std::vector<mxstream::MxData*> ofmap_grpc_;
-        int idx_;
-        std::mutex mu_;
-        std::condition_variable cv_;
-        grpc::Status status_;
-        bool done_ = false;
-        mxstream::MxData dummy;
+     std::string uuid_;
+     mxstream::MxService::Stub* stub_;
 };
 
 #endif

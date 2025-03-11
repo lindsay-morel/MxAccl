@@ -31,7 +31,7 @@ namespace MX
        * @param server_ip Server IP to connect to represented as string. Default IP address is 127.0.0.1, which is localhost.
        * @param server_port_base Starting port number as unsigned int, default is 10000. The server will use this port, **and** port+1 and port+2. For example, 10000, 10001, 10002.
        */
-      MxAcclMT(bool use_shared_mode = false, std::string server_ip = "127.0.0.1", unsigned int server_port_base = 10000);
+      MEMX_API_EXPORT MxAcclMT(bool use_shared_mode = false, std::string server_ip = "127.0.0.1", unsigned int server_port_base = 10000);
 
       /**
        * @brief Connect a dfp to MxAccl object. Currently only one connect_dfp per MxAccl object is allowed.
@@ -41,7 +41,7 @@ namespace MX
        *
        * @return dfp_id which is later to be passed in connect_stream function to specify that specific stream to a dfp
        */
-      int connect_dfp(const std::filesystem::path dfp_path,std::vector<int>& device_ids_to_use);
+      MEMX_API_EXPORT int connect_dfp(const std::filesystem::path dfp_path,std::vector<int>& device_ids_to_use);
 
       /**
        * @brief Construct a new MxAccl object. Currently only one connect_dfp per MxAccl object is allowed.
@@ -53,7 +53,7 @@ namespace MX
        *
        * @return dfp_id which is later to be passed in connect_stream function to specify that specific stream to a dfp
        */
-      int connect_dfp(const std::filesystem::path dfp_path,int group_id = 0);
+      MEMX_API_EXPORT int connect_dfp(const std::filesystem::path dfp_path,int group_id = 0);
 
       /**
        * @brief Connect a dfp as bytes to MxAccl object. Currently only one connect_dfp per MxAccl object is allowed.
@@ -63,7 +63,7 @@ namespace MX
        *
        * @return dfp_id which is later to be passed in connect_stream function to specify that specific stream to a dfp
        */
-      int connect_dfp(const uint8_t *dfp_bytes, std::vector<int>& device_ids_to_use);
+      MEMX_API_EXPORT int connect_dfp(const uint8_t *dfp_bytes, std::vector<int>& device_ids_to_use);
 
       /**
        * @brief Connect a dfp as bytes to MxAccl object. Currently only one connect_dfp per MxAccl object is allowed.
@@ -75,25 +75,25 @@ namespace MX
        *
        * @return dfp_id which is later to be passed in connect_stream function to specify that specific stream to a dfp
        */
-      int connect_dfp(const uint8_t *dfp_bytes, int group_id = 0);
+      MEMX_API_EXPORT int connect_dfp(const uint8_t *dfp_bytes, int group_id = 0);
 
 
       //Destructor
-      ~MxAcclMT();
+      MEMX_API_EXPORT ~MxAcclMT();
 
       /**
        * @brief Get number of models in the compiled DFP
        *
        * @return Number of models
        */
-      int get_num_models();
+      MEMX_API_EXPORT int get_num_models();
 
       /**
        * @brief Get number of chips the dfp is compiled for
        *
        * @return Number of chips
        */
-      int get_dfp_num_chips();
+      MEMX_API_EXPORT int get_dfp_num_chips();
 
 
       /**
@@ -101,7 +101,7 @@ namespace MX
        * @param model_id model ID or the index for the required information
        * @return if valid model_id then MxModelInfo model_info with necessary information else throw runtime error invalid model_id
       */
-      MX::Types::MxModelInfo get_model_info(int model_id) const;
+      MEMX_API_EXPORT MX::Types::MxModelInfo get_model_info(int model_id) const;
 
       /**
        * @brief Connect the information of the post-processing model that has been cropped by the neural compiler
@@ -111,7 +111,7 @@ namespace MX
        * @param post_size_list If the output of the post-processing has a variable size or if the ouput sizes
        * are not deduced, the maximum possible sizes of the output need to be passed. The default is an empty vector.
       */
-      void connect_post_model(std::filesystem::path post_model_path, int model_idx=0, const std::vector<size_t>& post_size_list={});
+      MEMX_API_EXPORT void connect_post_model(std::filesystem::path post_model_path, int model_idx=0, const std::vector<size_t>& post_size_list={});
 
       /**
        * @brief Connect the information of the pre-processing model that has been cropped by the neural compiler
@@ -119,21 +119,21 @@ namespace MX
        * @param pre_model_path  Abosulte path of the pre-processing model. (Can be onnx/tflite etc)
        * @param model_idx The index of model for which the post-processing is intended to be connected to.
       */
-      void connect_pre_model(std::filesystem::path pre_model_path, int model_idx=0);
+      MEMX_API_EXPORT void connect_pre_model(std::filesystem::path pre_model_path, int model_idx=0);
 
       /**
        * @brief get information of the pre-processing model set to a particular model such as number of in out featureMaps and their sizes and shapes
        * @param model_id model ID or the index for the required information
        * @return if valid model_id then MxModelInfo model_info with necessary information else throw runtime error invalid model_id
       */
-      MX::Types::MxModelInfo get_pre_model_info(int model_id) const;
+      MEMX_API_EXPORT MX::Types::MxModelInfo get_pre_model_info(int model_id) const;
 
       /**
        * @brief get information of the post-processing model set to a particular model such as number of in out featureMaps and their sizes and shapes s
        * @param model_id model ID or the index for the required information
        * @return if valid model_id then MxModelInfo model_info with necessary information else throw runtime error invalid model_id
       */
-      MX::Types::MxModelInfo get_post_model_info(int model_id) const;
+      MEMX_API_EXPORT MX::Types::MxModelInfo get_post_model_info(int model_id) const;
 
       /**
        * @brief Send input to the accelerator in userThreading mode.
@@ -146,7 +146,7 @@ namespace MX
        * @param timeout -> Wait time in milliseconds for the function to be succesful. Default is 0 which indicates that the function never timesout.
        * @return Returns true if the inference is succesful and false if a timeout happens.
       */
-      bool send_input(std::vector<float*> in_data, int model_id, int stream_id, int dfp_id=0, bool channel_first = false, int32_t timeout = 0);
+      MEMX_API_EXPORT bool send_input(std::vector<float*> in_data, int model_id, int stream_id, int dfp_id=0, bool channel_first = false, int32_t timeout = 0);
 
 
       // /**
@@ -172,7 +172,7 @@ namespace MX
        * @param timeout -> Wait time in milliseconds for the function to be succesful. Default is 0 which indicates that the function never timesout.
        * @return Returns true if the inference is succesful and false if a timeout happens.
       */
-      bool receive_output(std::vector<float*> &out_data, int model_id, int stream_id, int dfp_id=0, bool channel_first = false, int32_t timeout=0);
+      MEMX_API_EXPORT bool receive_output(std::vector<float*> &out_data, int model_id, int stream_id, int dfp_id=0, bool channel_first = false, int32_t timeout=0);
 
       // /**
       //  * @brief Run inference on the accelerator in userThreading mode.
@@ -202,7 +202,7 @@ namespace MX
        * @param timeout -> Wait time in milliseconds for the function to be succesful. Default is 0 which indicates that the function never timesout.
        * @return Returns true if the inference is succesful and false if a timeout happens.
       */
-      bool run(std::vector<float *> in_data, std::vector<float*> &out_data, int pmodel_id, int pstream_id, int dfp_id=0, bool in_channel_first=false, bool out_channel_first=false, int32_t timeout=0);
+      MEMX_API_EXPORT bool run(std::vector<float *> in_data, std::vector<float*> &out_data, int pmodel_id, int pstream_id, int dfp_id=0, bool in_channel_first=false, bool out_channel_first=false, int32_t timeout=0);
 
       /**
        * @brief Configure multi-threaded FeatureMap data conversion using the given number of threads.
@@ -213,7 +213,7 @@ namespace MX
        * @param num_threads Number of worker threads for FeatureMaps. Use >= 2 to enable. Values < 2 disable.
        * @param model_idx Index of model to enable the feature  The default is set to 0
       */
-      void set_parallel_fmap_convert(int num_threads, int model_idx=0);
+      MEMX_API_EXPORT void set_parallel_fmap_convert(int num_threads, int model_idx=0);
 
       private:
           std::filesystem::path dfp_path;

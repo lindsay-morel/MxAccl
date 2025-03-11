@@ -1,0 +1,8 @@
+Source: mxa-manager
+Maintainer: MemryX <no-reply@memryx.com>
+Build-Depends: debhelper (>= 10), memx-drivers (>= 1.2.0), memx-drivers (<< 1.3.0), libssl-dev, uuid-dev, memx-accl (>= 1.2.0), memx-accl (<< 1.3.0)
+
+Package: mxa-manager
+Architecture: amd64 arm64 riscv64
+Depends: memx-accl (>= 1.2.0), memx-accl (<< 1.3.0), ${shlibs:Depends}, ${misc:Depends}
+Description: Hardware management daemon for MemryX MXAs

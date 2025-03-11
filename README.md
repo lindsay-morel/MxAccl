@@ -6,7 +6,7 @@
 
 
 <!-- Badges for quick project insights -->
-[![MemryX SDK](https://img.shields.io/badge/MemryX%20SDK-1.0-brightgreen)](https://developer.memryx.com)
+[![MemryX SDK](https://img.shields.io/badge/MemryX%20SDK-1.2-brightgreen)](https://developer.memryx.com)
 [![C++](https://img.shields.io/badge/C++-17-blue)](https://en.cppreference.com)
 
 
@@ -39,7 +39,7 @@ This repository contains the source code for the core `mx_accl` library and asso
 | -------------------------------------| ---------------------------------------------------------------------------------------------------------------------        |
 | `mx_accl`                            | Core MxAccl runtime library code
 | `mx_accl/tests`                      | Unit tests for MxAccl
-| `mx_server`                          | MX-Server daemon and config files
+| `mx_server`                          | MXA-Manager daemon and config files
 | `tools`                              | Utilities like acclBench
 
 > **IMPORTANT**: For most users, we highly recommend using the prebuilt `memx-accl` package provided by the  [MemryX SDK](https://developer.memryx.com), as it simplifies development and ensures all dependencies are properly managed.
@@ -60,7 +60,7 @@ For advanced users who prefer to build the MxAccl library from source, follow th
 git clone https://github.com/memryx/MxAccl.git
 ```
 
-### Step 2: Build gRPC
+### Step 2: Build gRPC (only required if using mxa-manager)
 
 *Outside* your MxAccl folder, we need to build a static library version of gRPC.
 
@@ -88,15 +88,34 @@ make install
 
 ### Step 3: Build MxAccl
 
+If you plan on using [Shared mode](https://developer.memryx.com/tutorials/mxa_manager/daemon_use.html), you will have to build gRPC above and then use Step 3a to build MxAccl.
+
+If you're definitely only going to use one application at a time in [Local mode](https://developer.memryx.com/tutorials/mxa_manager/daemon_use.html#local-mode-single-process-default), such as on Yocto systems, you can skip the dependency on mxa-manager (and thus gRPC) entirely with Step 3b.
+
+
+**Hint**: if you don't care about running unit tests, use the `-DBUILD_TYPE=Packaging` argument!
+
+
+#### Step 3a: with mxa-manager & gRPC support
+
 ```bash
 mkdir build && cd build
 
 # must include the path to grpc_inst here
-PATH="$HOME/grpc_inst:$PATH" cmake .. [-DBUILD_TYPE=[Debug | Release]]
+PATH="$HOME/grpc_inst:$PATH" cmake [-DBUILD_TYPE=[Debug | Release | Packaging]] ..
 make -j
-   ```
+```
 
-The above commands will build the MxAccl library, acclBench, and all unit tests.
+
+#### Step 3b: *without* mxa-manager / gRPC support
+
+```bash
+mkdir build && cd build
+
+cmake -DDISABLE_DAEMON=1 [-DBUILD_TYPE=[Debug | Release | Packaging]] ..
+make -j
+```
+
 
 ### Additional Dependencies for Development
 
@@ -110,13 +129,16 @@ The above commands will build the MxAccl library, acclBench, and all unit tests.
 ### MxAccl
 The typical use of `MxAccl` is to integrate it directly into your C++ application to manage model inference on the MemryX MX3 accelerator. For complete documentation and detailed integration tutorials, visit the [MxAccl Documentation](https://developer.memryx.com/api/accelerator/accelerator.html) and [Tutorials Page](https://developer.memryx.com/tutorials/tutorials.html).
 
-#### mx_server
-Starting with the 1.1 release, the `mx_server` process must always be running, even if you're not using Shared mode, in order for the daemon to manage locks/access to connected MX3 devices.
+#### mxa_manager
+Starting with the 1.1 release, the `mxa_manager` process is used, even if you're not using Shared mode, for the daemon to manage locks/access to connected MX3 devices.
 
-So before starting any tests or example apps, run the `mx_server` command in a separate terminal and leave it going.
+**But**, if you compile with `-DDISABLE_DAEMON=1` like in Step 3b above, it can be bypassed by your applications. This is not recommended unless you have no alternative way to build gRPC for your platform.
+
+
+So before starting any tests or example apps, run the `mxa_manager` command in a separate terminal and leave it going.
 
 ``` bash
-./mx_server/mx_server
+./mx_server/mxa_manager
 ```
 
 

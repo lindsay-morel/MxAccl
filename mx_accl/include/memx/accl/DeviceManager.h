@@ -43,30 +43,30 @@ namespace MX
 
     class DeviceManager{
       public:
-        DeviceManager(void* stub = NULL, bool server_mode = false);
-        mx_retval_t opendfp(const std::filesystem::path dfp_filename, int dfp_tag);
-        mx_retval_t opendfp_bytes(const uint8_t *b, int dfp_tag);
-        mx_retval_t setup_mxa(int dfp_tag, std::vector<int>& pgroup_ids);
-        mx_retval_t attach_dfp_to_device(int dfp_tag);
-        mx_retval_t download_dfp_to_device(int dfp_tag);
-        mx_retval_t init_mx_models(int dfp_tag, std::vector<ModelBase *>* mxmodel_vector );
+        MEMX_API_EXPORT DeviceManager(void* stub = NULL, bool server_mode = false);
+        MEMX_API_EXPORT mx_retval_t opendfp(const std::filesystem::path dfp_filename, int dfp_tag);
+        MEMX_API_EXPORT mx_retval_t opendfp_bytes(const uint8_t *b, int dfp_tag);
+        MEMX_API_EXPORT mx_retval_t setup_mxa(int dfp_tag, std::vector<int>& pgroup_ids);
+        MEMX_API_EXPORT mx_retval_t attach_dfp_to_device(int dfp_tag);
+        MEMX_API_EXPORT mx_retval_t download_dfp_to_device(int dfp_tag);
+        MEMX_API_EXPORT mx_retval_t init_mx_models(int dfp_tag, std::vector<ModelBase *>* mxmodel_vector );
 
         //Getter functions
-        int get_dfp_num_chips(int dfp_tag);
-        int get_dfp_num_models(int dfp_tag);
-        bool get_dfp_validity(int dfp_tag);
+        MEMX_API_EXPORT int get_dfp_num_chips(int dfp_tag);
+        MEMX_API_EXPORT int get_dfp_num_models(int dfp_tag);
+        MEMX_API_EXPORT bool get_dfp_validity(int dfp_tag);
 
-        mx_retval_t close_all_devices();
-        void cleanup__all_dfps();
+        MEMX_API_EXPORT mx_retval_t close_all_devices();
+        MEMX_API_EXPORT void cleanup__all_dfps();
         // void cleanup_all_setup_maps();
         // static void update_context_tracker_id();
         // static int get_context_tracker_id();
 
         // bool dfp_tag_duplicate_check(int dfp_tag);
-        void print_available_devices();
-        void cleanup_dfp(int dfp_tag);
-        mx_retval_t close_device(int device_id);
-        int get_num_outports(int dfp_tag);
+        MEMX_API_EXPORT void print_available_devices();
+        MEMX_API_EXPORT void cleanup_dfp(int dfp_tag);
+        MEMX_API_EXPORT mx_retval_t close_device(int device_id);
+        MEMX_API_EXPORT int get_num_outports(int dfp_tag);
         /*
         // Additional get function disabled for now but might need later
         float get_dfp_mxa_gen();

@@ -4,6 +4,10 @@
 #include <stdint.h>
 #include <stdexcept>
 #include <iostream>
+
+// for MEMX_API_EXPORT macro
+#include <memx/memx.h>
+
 namespace MX
 {
     namespace Types
@@ -18,7 +22,7 @@ namespace MX
                 /**
                 * @brief Construct a new ShapeVector type object
                 */
-                ShapeVector();// Initialize shape with 4 elements, all initialized to 0
+                MEMX_API_EXPORT ShapeVector();// Initialize shape with 4 elements, all initialized to 0
                 /**
                 * @brief Construct a new ShapeVector type object
                 * @param h Height 
@@ -26,40 +30,40 @@ namespace MX
                 * @param z Batch
                 * @param c Channel
                 */
-                ShapeVector(int64_t h, int64_t w, int64_t z, int64_t c) ;
+                MEMX_API_EXPORT ShapeVector(int64_t h, int64_t w, int64_t z, int64_t c) ;
                 /**
                 * @brief Construct a new ShapeVector type object
                 */
-                ShapeVector(int size);// Initialize shape with size #elements, all initialized to 1
+                MEMX_API_EXPORT ShapeVector(int size);// Initialize shape with size #elements, all initialized to 1
                 // // Overload [] operator const
                 // const int64_t& operator[](int64_t index) const ;
                 // Overload [] operator 
-                int64_t& operator[](int64_t index) ;
+                MEMX_API_EXPORT int64_t& operator[](int64_t index) ;
                 
                 /**
                 * @brief returns a vector of shape with channel first format
                 */
-                std::vector<int64_t> chfirst_shape();
+                MEMX_API_EXPORT std::vector<int64_t> chfirst_shape();
                 
                 /**
                 * @brief returns a vector of shape with channel last format
                 */
-                std::vector<int64_t> chlast_shape();
+                MEMX_API_EXPORT std::vector<int64_t> chlast_shape();
 
                 /**
                 * @brief returns a data pointer of the sape vector
                 */
-                int64_t* data();
+                MEMX_API_EXPORT int64_t* data();
 
                 /**
                 * @brief returns size of the shape vector
                 */
-                int64_t size() const ;           
+                MEMX_API_EXPORT int64_t size() const ;           
 
                 /**
                  * @brief sets the shape to channel first format
                  */
-                void set_ch_first();    
+                MEMX_API_EXPORT void set_ch_first();    
         };
 
         //struct with necessary model information collated for internal and external purposes

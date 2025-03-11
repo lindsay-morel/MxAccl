@@ -11,21 +11,9 @@ include /usr/share/dpkg/architecture.mk
 override_dh_install:
 	dh_install build/mx_accl/libmx_accl.so.$(DEB_VERSION_UPSTREAM) usr/lib/$(DEB_HOST_GNU_CPU)-linux-gnu/
 	dh_link usr/lib/$(DEB_HOST_GNU_CPU)-linux-gnu/libmx_accl.so.$(DEB_VERSION_UPSTREAM) usr/lib/$(DEB_HOST_GNU_CPU)-linux-gnu/libmx_accl.so
-	dh_install build/mx_accl/libmx_accl.a usr/lib/$(DEB_HOST_GNU_CPU)-linux-gnu/
 	dh_install mx_accl/include/memx/* usr/include/memx/
 	dh_install build/samples/acclBench/acclBench usr/bin/
-	dh_install build/mx_server/mx_server usr/bin/
-	dh_install mx_server/mx_server.conf etc/memryx/
 
-override_dh_systemd_enable:
-	dh_systemd_enable --name=mx-server
-
-override_dh_systemd_start:
-	dh_systemd_start --name=mx-server
-
-override_dh_installinit:
-	dh_installinit --name=mx-server
-	
 override_dh_shlibdeps:
 	dh_shlibdeps --dpkg-shlibdeps-params=--ignore-missing-info
 
@@ -34,6 +22,6 @@ override_dh_auto_build:
 override_dh_auto_test:
 
 override_dh_auto_install:
-	mv -v CMakeLists_noavx.txt CMakeLists.txt && rm -rf build && mkdir build && cd build && PATH="/io/grpc_inst:$$PATH" cmake -DCMAKE_BUILD_TYPE=Packaging .. && make -j && strip --strip-debug --strip-dwo --strip-unneeded --merge-notes mx_accl/libmx_accl.so && strip mx_server/mx_server && mv -v mx_accl/libmx_accl.so mx_accl/libmx_accl.so.$(DEB_VERSION_UPSTREAM) && mv -v mx_accl/libmx_accl_static.a mx_accl/libmx_accl.a
+	mv -v CMakeLists_noavx.txt CMakeLists.txt && rm -rf build && mkdir build && cd build && PATH="/io/grpc_inst:$$PATH" cmake -DCMAKE_BUILD_TYPE=Packaging .. && make -j && strip --strip-debug --strip-dwo --strip-unneeded --merge-notes mx_accl/libmx_accl.so && strip mx_server/mx_server && mv -v mx_accl/libmx_accl.so mx_accl/libmx_accl.so.$(DEB_VERSION_UPSTREAM)
 
 override_dh_auto_clean:

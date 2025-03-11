@@ -1,0 +1,5 @@
+mxa-manager (1.2.0-2) testing; urgency=medium
+
+    * First splitting of the daemon into this separate package
+
+ -- MemryX <no-reply@memryx.com>  Fri, 21 Feb 2025 00:00:00 -0500

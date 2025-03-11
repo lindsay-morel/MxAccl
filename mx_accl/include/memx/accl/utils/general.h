@@ -5,9 +5,16 @@
 #include <mutex>
 #include <queue>
 #include <optional>
+
+#ifdef __linux__
 #include <unistd.h>
 #include <sys/syscall.h>
+#endif
+
 #include <iostream>
+
+// to get the MEMX_API_EXPORT macro
+#include <memx/memx.h>
 
 using namespace std;
 
@@ -73,7 +80,8 @@ namespace MX
             std::pair<T1,T2> pop()
             {
                 lock_guard<mutex> lock(m_mutex);
-                std::pair<T1,T2> item = m_queue.pop_front();
+                std::pair<T1,T2> item = m_queue.front();
+                m_queue.pop_front();
                 return item;
             }
             std::pair<T1,T2> get()
@@ -103,8 +111,8 @@ namespace MX
             retval(){};
         } mx_retval;
 
-        void mx_checkandthrow(mx_retval ret);
-        void mx_checkandprint(mx_retval ret);
+        MEMX_API_EXPORT void mx_checkandthrow(mx_retval ret);
+        MEMX_API_EXPORT void mx_checkandprint(mx_retval ret);
     } // namespace Utils
 } // namespace MX
 

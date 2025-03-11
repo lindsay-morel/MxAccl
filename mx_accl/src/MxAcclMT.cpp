@@ -1,15 +1,19 @@
 #include <memx/accl/MxAcclMT.h>
 #include <sstream>
+
+#ifndef DISABLE_DAEMON
 #include <uuid/uuid.h>
 #include <grpcpp/grpcpp.h>
 #include "mx_proc.grpc.pb.h"
+#endif
 
 using namespace MX::Runtime;
 using namespace MX::Types;
 using namespace MX::Utils;
+
+#ifndef DISABLE_DAEMON
 using mxstream::MxService;
 using mxstream::MxData;
-
 struct daemon_items_mt{
     std::shared_ptr<grpc::Channel> grpc_channel_;
     std::shared_ptr<mxstream::MxService::Stub> stub_;
@@ -18,10 +22,21 @@ struct daemon_items_mt{
     mxstream::Uuid uuid_;
     mxstream::DfpData grpc_dfp;
 };
+#else
+struct daemon_items_mt{
+    void* grpc_channel_;
+    void* stub_;
+    void* model_stub_send_;
+    void* model_stub_recv_;
+    void* uuid_;
+    void* grpc_dfp;
+};
+#endif
 
 MxAcclMT::MxAcclMT(bool use_shared_mode, std::string server_ip, unsigned int server_port_base){
     dfp_valid = false;
     setup_status = false;
+  #ifndef DISABLE_DAEMON
     grpc::ChannelArguments sync_ch_args;
     grpc::ChannelArguments async_ch_args;
     sync_ch_args.SetMaxSendMessageSize(1024*1024*100);
@@ -43,6 +58,19 @@ MxAcclMT::MxAcclMT(bool use_shared_mode, std::string server_ip, unsigned int ser
         daemon_items_->model_stub_send_ = MxService::NewStub(grpc::CreateCustomChannel(server_ip+":"+base_plus1, grpc::InsecureChannelCredentials(),async_ch_args));
         daemon_items_->model_stub_recv_ = MxService::NewStub(grpc::CreateCustomChannel(server_ip+":"+base_plus2, grpc::InsecureChannelCredentials(),async_ch_args));
     }
+  #else
+    if(use_shared_mode){
+        throw std::runtime_error("This runtime was compiled with DISABLE_DAEMON, so it cannot use Shared Mode!");
+    }
+    device_manager = new MX::Runtime::DeviceManager(NULL, false);
+    daemon_items_ = std::make_unique<daemon_items_mt>();
+    daemon_items_->grpc_channel_ = NULL;
+    daemon_items_->stub_ = NULL;
+    daemon_items_->model_stub_send_ = NULL;
+    daemon_items_->model_stub_recv_ = NULL;
+    daemon_items_->uuid_ = NULL;
+    daemon_items_->grpc_dfp = NULL;
+  #endif
 }
 
 int MxAcclMT::connect_dfp(const std::filesystem::path pdfp_path, int group_id)
@@ -83,6 +111,7 @@ int MxAcclMT::connect_dfp(const uint8_t *dfp_bytes, std::vector<int>& device_ids
         throw runtime_error("device_ids_to_use parameter cannot be empty");
     }
 
+  #ifndef DISABLE_DAEMON
     if(device_manager == NULL){
         uuid_t uuid;
         uuid_generate_time_safe(uuid);
@@ -125,6 +154,7 @@ int MxAcclMT::connect_dfp(const uint8_t *dfp_bytes, std::vector<int>& device_ids
         }
         return 0;
     }
+  #endif
 
     dfp_tag = 0;
     if(dfp_bytes!=NULL){
@@ -139,8 +169,10 @@ int MxAcclMT::connect_dfp(const uint8_t *dfp_bytes, std::vector<int>& device_ids
 
     mx_checkandthrow(device_manager->setup_mxa(dfp_tag, device_ids_to_use));
     setup_status = true;
+  #ifndef DISABLE_DAEMON
     local_heartbeat_thread = new std::thread(&MxAcclMT::local_heartbeat_fun,this);
     local_heartbeat_run.store(true);
+  #endif
     mx_checkandthrow(device_manager->attach_dfp_to_device(dfp_tag));
     mx_checkandthrow(device_manager->download_dfp_to_device(dfp_tag));
     mx_checkandthrow(device_manager->init_mx_models(dfp_tag, &models));
@@ -168,7 +200,11 @@ void MxAcclMT::init_mx_models(std::vector<int>& device_ids_to_use){
             throw(std::runtime_error("int inputs are currently not supported"));               
         }
         else{
+          #ifndef DISABLE_DAEMON
             MxModel<float> *fm = new MxModel<float>(i, dfp_, &context_ids_vector_,daemon_items_->model_stub_send_.get(),daemon_items_->model_stub_recv_.get(),models_uuid[i]);
+          #else
+            MxModel<float> *fm = new MxModel<float>(i, dfp_, &context_ids_vector_,NULL,NULL,0);
+          #endif
             models.push_back(fm);
         }
     }
@@ -195,11 +231,14 @@ MxAcclMT::~MxAcclMT()
         if(device_manager){
             device_manager->cleanup__all_dfps();
             mx_checkandprint(device_manager->close_all_devices());
+          #ifndef DISABLE_DAEMON
             local_heartbeat_run.store(false);
             local_heartbeat_thread->join();
             delete local_heartbeat_thread;
             local_heartbeat_thread = NULL;
+          #endif
         }
+      #ifndef DISABLE_DAEMON
         else{
             grpc::ClientContext ctx;
             mxstream::Ping response;
@@ -212,6 +251,7 @@ MxAcclMT::~MxAcclMT()
             delete heartbeat_thread;
             heartbeat_thread = NULL;
         }
+      #endif
     }
 
     if(device_manager!=NULL){
@@ -331,6 +371,7 @@ bool MxAcclMT::run(std::vector<float *> in_data, std::vector<float*> &out_data, 
 }
 
 void MxAcclMT::heartbeat_fun(){
+  #ifndef DISABLE_DAEMON
     while (heartbeat_run.load())
     {
         grpc::ClientContext ctx;
@@ -342,9 +383,11 @@ void MxAcclMT::heartbeat_fun(){
         }
         std::this_thread::sleep_for(250ms);   
     }
+  #endif
 }
 
 void MxAcclMT::local_heartbeat_fun(){
+  #ifndef DISABLE_DAEMON
     while (local_heartbeat_run.load())
     {
         grpc::ClientContext ctx;
@@ -359,4 +402,5 @@ void MxAcclMT::local_heartbeat_fun(){
         }
         std::this_thread::sleep_for(250ms);   
     }
+  #endif
 }

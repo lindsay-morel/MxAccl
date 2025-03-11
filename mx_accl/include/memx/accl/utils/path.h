@@ -3,6 +3,10 @@
 
 #include <filesystem>
 #include <string>
+
+// for MEMX_API_EXPORT macro
+#include <memx/memx.h>
+
 namespace MX
 {
     namespace Utils
@@ -11,12 +15,12 @@ namespace MX
          * Returns absolute path of home directory if env variable `MX_API_HOME`
          * is set else returns empty path
          */
-        std::filesystem::path mx_get_home_dir();
+        MEMX_API_EXPORT std::filesystem::path mx_get_home_dir();
 
         /**
          * Returns absolute path of accl directory
          */
-        std::filesystem::path mx_get_accl_dir();
+        MEMX_API_EXPORT std::filesystem::path mx_get_accl_dir();
 
     } // namespace Utils
 } // namespace MX

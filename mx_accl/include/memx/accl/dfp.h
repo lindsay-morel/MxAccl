@@ -37,7 +37,9 @@
 #include <string>
 #include <vector>
 
-#include <openssl/sha.h>
+
+// just need this for the MEMX_API_EXPORT macro
+#include <memx/memx.h>
 
 /**
  * @brief Namespace that includes all DFP-related types and classes
@@ -63,7 +65,7 @@ namespace Dfp
     /**
      * @brief Create an empty object
      */
-    DataShapes();
+    MEMX_API_EXPORT DataShapes();
 
     /**
      * @brief Create a new object with `num` shapes, set to the corresponding size in the `sizes` array
@@ -71,20 +73,20 @@ namespace Dfp
      * @param num   Number of shapes (AKA: number of active ports for this DFP)
      * @param sizes Array of unsigned ints, of length `num`, that are the total size in # of values for that feature map port. For example, fmap of shape [5, 5, 1, 4] = 100 total size.
      */
-    DataShapes(int num, unsigned int *sizes_);
+    MEMX_API_EXPORT DataShapes(int num, unsigned int *sizes_);
 
     // copy constructor
-    DataShapes(const DataShapes &t);
+    MEMX_API_EXPORT DataShapes(const DataShapes &t);
 
     // destructor
-    ~DataShapes();
+    MEMX_API_EXPORT ~DataShapes();
 
     /**
      * @brief (Re)sets the number of sizes in this object. This *will clear existing data*.
      *
      * @param num  The new length of the sizes array
      */
-    void set_num_shapes(int num);
+    MEMX_API_EXPORT void set_num_shapes(int num);
 
     /**
      * @brief Sets the total size for a given port/feature map.
@@ -92,7 +94,7 @@ namespace Dfp
      * @param idx  The shape (port/feature map) to set the size for.
      * @param size Total size value to be set for this shape.
      */
-    void set_size(int idx, unsigned int size);
+    MEMX_API_EXPORT void set_size(int idx, unsigned int size);
 
     /**
      * @brief Current number of fmap/shapes.
@@ -104,9 +106,9 @@ namespace Dfp
      */
     unsigned int *sizes;
 
-    DataShapes &operator=(const DataShapes &other);
-    unsigned int &operator[](std::size_t idx);
-    unsigned int operator[](std::size_t idx) const;
+    MEMX_API_EXPORT DataShapes &operator=(const DataShapes &other);
+    MEMX_API_EXPORT unsigned int &operator[](std::size_t idx);
+    MEMX_API_EXPORT unsigned int operator[](std::size_t idx) const;
   };
 
   /**
@@ -182,24 +184,24 @@ namespace Dfp
      *
      * @param f  Path to .dfp file
      */
-    DfpObject(const char *f);
+    MEMX_API_EXPORT DfpObject(const char *f);
 
     /**
      * @brief Constructor from raw bytes
      *
      * @param f  Pointer to data
      */
-    DfpObject(const uint8_t *b);
+    MEMX_API_EXPORT DfpObject(const uint8_t *b);
 
     /**
      * @brief Constructor from a file (name as C++ std::string)
      *
      * @param f  Path to .dfp file
      */
-    DfpObject(std::string f);
+    MEMX_API_EXPORT DfpObject(std::string f);
 
     // destructor
-    ~DfpObject();
+    MEMX_API_EXPORT ~DfpObject();
 
     /**
      * @brief Get input port info and put the shape/format into the supplied pointers
@@ -212,7 +214,7 @@ namespace Dfp
      *
      * @returns 0 on success, -1 on error
      */
-    int get_input_shape_fmt(int port, uint16_t *dh, uint16_t *dw, uint16_t *dz, uint32_t *dc, PortDataFormat *pdf);
+    MEMX_API_EXPORT int get_input_shape_fmt(int port, uint16_t *dh, uint16_t *dw, uint16_t *dz, uint32_t *dc, PortDataFormat *pdf);
 
     /**
      * @brief Get ALL input ports' info and put the shapes/formats into the supplied array pointers
@@ -224,7 +226,7 @@ namespace Dfp
      *
      * @returns 0 on success, -1 on error
      */
-    int get_all_input_shapes_fmts(uint16_t *dhs, uint16_t *dws, uint16_t *dzs, uint32_t *dcs, PortDataFormat *pdfs);
+    MEMX_API_EXPORT int get_all_input_shapes_fmts(uint16_t *dhs, uint16_t *dws, uint16_t *dzs, uint32_t *dcs, PortDataFormat *pdfs);
 
     /**
      * @brief Get output port info and put the shape/format into the supplied pointers
@@ -237,7 +239,7 @@ namespace Dfp
      *
      * @returns 0 on success, -1 on error
      */
-    int get_output_shape(int port, uint16_t *dh, uint16_t *dw, uint16_t *dz, uint32_t *dc);
+    MEMX_API_EXPORT int get_output_shape(int port, uint16_t *dh, uint16_t *dw, uint16_t *dz, uint32_t *dc);
 
     /**
      * @brief Get ALL output ports' info and put the shapes/formats into the supplied array pointers
@@ -249,7 +251,7 @@ namespace Dfp
      *
      * @returns 0 on success, -1 on error
      */
-    int get_all_output_shapes(uint16_t *dhs, uint16_t *dws, uint16_t *dzs, uint32_t *dcs);
+    MEMX_API_EXPORT int get_all_output_shapes(uint16_t *dhs, uint16_t *dws, uint16_t *dzs, uint32_t *dcs);
 
     /**
      * @brief Gets a pointer to the @ref PortInfo data for the given input port.
@@ -258,7 +260,7 @@ namespace Dfp
      *
      * @returns Pointer to the PortInfo on success, NULL on error.
      */
-    PortInfo *input_port(int port);
+    MEMX_API_EXPORT PortInfo *input_port(int port);
 
     /**
      * @brief Gets a pointer to the @ref PortInfo data for the given output port.
@@ -267,7 +269,7 @@ namespace Dfp
      *
      * @returns Pointer to the PortInfo on success, NULL on error.
      */
-    PortInfo *output_port(int port);
+    MEMX_API_EXPORT PortInfo *output_port(int port);
 
     /**
      * @brief Copies ALL input port @ref PortInfo structs to the given PortInfo array.
@@ -276,7 +278,7 @@ namespace Dfp
      *
      * @returns 0 on success, -1 on error.
      */
-    int get_all_input_port_info(PortInfo *dstv);
+    MEMX_API_EXPORT int get_all_input_port_info(PortInfo *dstv);
 
     /**
      * @brief Copies ALL output port @ref PortInfo structs to the given PortInfo array.
@@ -285,35 +287,35 @@ namespace Dfp
      *
      * @returns 0 on success, -1 on error.
      */
-    int get_all_output_port_info(PortInfo *dstv);
+    MEMX_API_EXPORT int get_all_output_port_info(PortInfo *dstv);
 
     /**
      * @brief Get a @ref DataShapes object that has all input port total sizes.
      *
      * @returns A DataShapes object.
      */
-    DataShapes all_indata_shapes();
+    MEMX_API_EXPORT DataShapes all_indata_shapes();
 
     /**
      * @brief Get a @ref DataShapes object that has all output port total sizes.
      *
      * @returns A DataShapes object.
      */
-    DataShapes all_outdata_shapes();
+    MEMX_API_EXPORT DataShapes all_outdata_shapes();
 
     /**
      * @brief Returns a @ref DfpMeta object with all the metadata.
      *
      * @returns DfpMeta for this DFP file.
      */
-    DfpMeta get_dfp_meta();
+    MEMX_API_EXPORT DfpMeta get_dfp_meta();
 
     /**
      * @brief Returns the path to the opened .dfp file. This is useful for giving the .c_str() to driver API calls if needed.
      *
      * @returns std::string to file path.
      */
-    std::string path();
+    MEMX_API_EXPORT std::string path();
 
     /**
      * @brief `true` if this is a valid, successfully opened DFP. `false` otherwise.

@@ -1,4 +1,4 @@
-Copyright (c) 2024 MemryX Inc.
+Copyright (c) 2025 MemryX Inc.
 MIT License
 
 Permission is hereby granted, free of charge, to any person obtaining a

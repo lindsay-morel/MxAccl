@@ -3,36 +3,26 @@ include_directories(${OpenCV_INCLUDE_DIRS})
 
 file(GLOB local_src src/*.cpp src/utils/*.cpp)
 
-add_library(${MXACCL_STATIC} STATIC ${local_src})
-target_link_libraries(${MXACCL_STATIC} memx pthread dl uuid)
-
 add_library(${MXACCL_DYNAMIC} SHARED ${local_src})
 target_link_libraries(${MXACCL_DYNAMIC} memx pthread dl uuid)
 
 target_compile_options(${MXACCL_DYNAMIC} PRIVATE -Werror)
-target_compile_options(${MXACCL_STATIC} PRIVATE -Werror)
 
-target_link_libraries(${MXACCL_DYNAMIC}
+if(DEFINED DISABLE_DAEMON)
+  target_link_libraries(${MXACCL_DYNAMIC})
+else()
+  target_link_libraries(${MXACCL_DYNAMIC}
             ${MX_GRPC_LIB}
             absl::flags
             absl::flags_parse
             ${_REFLECTION}
             ${_GRPC_GRPCPP}
             ${_PROTOBUF_LIBPROTOBUF})
+endif()
 
-target_link_libraries(${MXACCL_STATIC}
-${MX_GRPC_LIB}
-absl::flags
-absl::flags_parse
-${_REFLECTION}
-${_GRPC_GRPCPP}
-${_PROTOBUF_LIBPROTOBUF})
 
 if(CMAKE_BUILD_TYPE MATCHES "Debug")
   target_link_options(${MXACCL_DYNAMIC}
-    BEFORE PUBLIC PUBLIC -fsanitize=address
-  )
-  target_link_options(${MXACCL_STATIC}
     BEFORE PUBLIC PUBLIC -fsanitize=address
   )
 endif()

@@ -13,9 +13,9 @@ namespace MX
     namespace Types
     {
         //                          0             1              2              3              4            5              6
-        enum MX_data_format { MX_FMT_GBF80, MX_FMT_RGB565, MX_FMT_RGB888, MX_FMT_YUV422, MX_FMT_BF16, MX_FMT_FP32, MX_FMT_GBF80_ROW};
+        enum MEMX_API_EXPORT MX_data_format { MX_FMT_GBF80, MX_FMT_RGB565, MX_FMT_RGB888, MX_FMT_YUV422, MX_FMT_BF16, MX_FMT_FP32, MX_FMT_GBF80_ROW};
 
-        enum FeatureMap_Type{ FM_DFP, FM_PRE, FM_POST};
+        enum MEMX_API_EXPORT FeatureMap_Type{ FM_DFP, FM_PRE, FM_POST};
 
         /**
          * @brief The FeatureMap class
@@ -40,7 +40,7 @@ namespace MX
              * @param num_chan  number of channels
              * @param fmap_convert_threads number of threads to use for format convert / transpose
              */
-            FeatureMap(size_t size, MX_data_format format = MX_FMT_FP32, uint16_t dim_h = 0, uint16_t dim_w = 0, uint16_t dim_z = 0, size_t num_chan = 0, int fmap_convert_threads = 1);
+            MEMX_API_EXPORT FeatureMap(size_t size, MX_data_format format = MX_FMT_FP32, uint16_t dim_h = 0, uint16_t dim_w = 0, uint16_t dim_z = 0, size_t num_chan = 0, int fmap_convert_threads = 1);
 
             /**
              * @brief Additional Constructor to featureMap - creates a data block and copies the input data to the block and sets all necessary dimensions of the featureMap
@@ -54,14 +54,14 @@ namespace MX
              * @param num_chan  number of channels
              * @param fmap_convert_threads number of threads to use for format convert / transpose
              */
-            FeatureMap(T *input, size_t size, MX_data_format format = MX_FMT_FP32, uint16_t dim_h = 0, uint16_t dim_w = 0, uint16_t dim_z = 0, size_t num_chan = 0, int fmap_convert_threads = 1);
+            MEMX_API_EXPORT FeatureMap(T *input, size_t size, MX_data_format format = MX_FMT_FP32, uint16_t dim_h = 0, uint16_t dim_w = 0, uint16_t dim_z = 0, size_t num_chan = 0, int fmap_convert_threads = 1);
 
             /**
              * @brief Copy constructor of the featureMap. Copies all necessary information from another featureMap
              *
              * @param rhs featureMap object
              */
-            FeatureMap(const FeatureMap& rhs);
+            MEMX_API_EXPORT FeatureMap(const FeatureMap& rhs);
 
             /**
              * @brief Function get output from Accelarator. Copies output data from featureMap to passed pointer
@@ -70,7 +70,7 @@ namespace MX
              * @param channel_first boolean variable based on which output data is copied in channel first or channel last format. default is false to return channel last format
              * @return MX_Status Success if the copy is successfull
              */
-            MX::Utils::MX_status get_data(T *out_data , bool channel_first=false) const;
+            MEMX_API_EXPORT MX::Utils::MX_status get_data(T *out_data , bool channel_first=false) const;
 
             /**
              * @brief Function get output from Accelarator. Sets the internal pointer to the featureMap to the passed out_data pointer. Does not copy data from featureMap to passed pointer.
@@ -81,7 +81,7 @@ namespace MX
              * @param channel_first boolean variable based on which output data is copied in channel first or channel last format. default is false to return channel last format
              * @return MX_Status Success if the copy is successfull
              */
-            MX::Utils::MX_status get_data_no_copy(T*& out_data, bool channel_first = false) const;
+            MEMX_API_EXPORT MX::Utils::MX_status get_data_no_copy(T*& out_data, bool channel_first = false) const;
 
             /**
              * @brief Function to set input data to Accelarator. Copies data from provided input pointer to featureMap
@@ -90,38 +90,39 @@ namespace MX
              * @param channel_first boolean variable that indicates the copied data is in channel first or channle last format. default is false expecting data in channel last format
              * @return MX_Status Success if the copy is successfull
              */
-            MX::Utils::MX_status set_data(T *in_data , bool channel_first=false) const;
+            MEMX_API_EXPORT MX::Utils::MX_status set_data(T *in_data , bool channel_first=false) const;
             //Returns the data pointer of featureMap after
 
-            void set_data_len(T *in_data, size_t data_len=0) const;
+            MEMX_API_EXPORT void set_data_len(T *in_data, size_t data_len=0) const;
 
-            void get_data_len(T *out_data, size_t data_len=0) const;
+            MEMX_API_EXPORT void get_data_len(T *out_data, size_t data_len=0) const;
 
             //Returns the pointer of formatted data of featureMap
-            uint8_t *get_formatted_data();
+            MEMX_API_EXPORT uint8_t *get_formatted_data();
 
-            virtual ~FeatureMap();
+            MEMX_API_EXPORT virtual ~FeatureMap();
             //sets the the in_ready flag to user input
-            void set_in_ready(bool flag);
+            MEMX_API_EXPORT void set_in_ready(bool flag);
             //sets the the out_ready flag to user input
-            void set_out_ready(bool flag);
+            MEMX_API_EXPORT void set_out_ready(bool flag);
             //return in_ready flag
-            bool get_in_ready();
+            MEMX_API_EXPORT bool get_in_ready();
             //returns out_ready flag
-            bool get_out_ready();
+            MEMX_API_EXPORT bool get_out_ready();
             // Transpose function to use if channel first is required
-            void transpose_hwc_chw(T* input, T* output) const;
+            MEMX_API_EXPORT void transpose_hwc_chw(T* input, T* output) const;
             //transpose function to use if channel last is required
-            void transpose_chw_hwc(T* input, T* output) const;
+            MEMX_API_EXPORT void transpose_chw_hwc(T* input, T* output) const;
 
             //copy assignment operator
-            FeatureMap& operator=(const FeatureMap& rhs);
+            MEMX_API_EXPORT FeatureMap& operator=(const FeatureMap& rhs);
 
-            size_t get_formatted_size();
-            std::vector<int64_t> shape(bool channel_first=false) const;
-            T* get_data_ptr();
+            MEMX_API_EXPORT size_t get_formatted_size();
+            MEMX_API_EXPORT std::vector<int64_t> shape(bool channel_first=false) const;
+            MEMX_API_EXPORT T* get_data_ptr();
+            MEMX_API_EXPORT int get_num_fmap_threads() const;
+            
             FeatureMap_Type fm_type = FM_DFP;
-            int get_num_fmap_threads() const;
         private:
             mutable T *fmap_data; // data in user-facing format (float or uint8_t)
             mutable T *transposed_fmap_data;
