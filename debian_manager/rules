@@ -29,6 +29,6 @@ override_dh_auto_build:
 override_dh_auto_test:
 
 override_dh_auto_install:
-	mv -v CMakeLists_noavx.txt CMakeLists.txt && rm -rf build ; mkdir build ; cd build ; PATH="/io/grpc_inst:$$PATH" cmake -DCMAKE_BUILD_TYPE=Packaging .. && make -j && strip --strip-debug --strip-dwo --strip-unneeded --merge-notes mx_accl/libmx_accl.so && strip mx_server/mx_server && mv -v mx_accl/libmx_accl.so mx_accl/libmx_accl.so.$(DEB_VERSION_UPSTREAM) && mv mx_server/mx_server mx_server/mxa_manager
+	rm -rf build ; mkdir build ; cd build ; PATH="/io/grpc_inst:$$PATH" cmake -DCMAKE_BUILD_TYPE=Packaging .. && make -j && strip --strip-debug --strip-dwo --strip-unneeded --merge-notes mx_accl/libmx_accl.so && strip mx_server/mx_server && mv -v mx_accl/libmx_accl.so mx_accl/libmx_accl.so.$(DEB_VERSION_UPSTREAM) && mv mx_server/mx_server mx_server/mxa_manager
 
 override_dh_auto_clean:

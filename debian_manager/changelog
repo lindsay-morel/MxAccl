@@ -1,3 +1,21 @@
+mxa-manager (1.2.1-1) stable; urgency=medium
+
+    * Add temp and power reporting support for upcoming new MX3 SKU
+
+ -- MemryX <no-reply@memryx.com>  Mon, 17 Mar 2025 00:00:00 -0500
+
+mxa-manager (1.2.0-5) stable; urgency=medium
+
+    * SDK 1.2 stable
+
+ -- MemryX <no-reply@memryx.com>  Tue, 4 Mar 2025 00:00:00 -0500
+
+mxa-manager (1.2.0-3) testing; urgency=medium
+
+    * add DFP 1p2_compatible check
+
+ -- MemryX <no-reply@memryx.com>  Wed, 26 Feb 2025 00:00:00 -0500
+
 mxa-manager (1.2.0-2) testing; urgency=medium
 
     * First splitting of the daemon into this separate package

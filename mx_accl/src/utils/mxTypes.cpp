@@ -64,3 +64,28 @@ int64_t MX::Types::ShapeVector::size() const {
 void MX::Types::ShapeVector::set_ch_first(){
     shape = this->chfirst_shape();
 }
+
+
+MxVoltageOption MX::Types::getVoltageFromFrequency(MxFrequencyOption freq) {
+    switch (freq) {
+        case MxFrequencyOption::FREQ_200MHz:
+        case MxFrequencyOption::FREQ_300MHz:
+            return MxVoltageOption::VOLT_680mV;
+        case MxFrequencyOption::FREQ_400MHz:
+            return MxVoltageOption::VOLT_690mV;
+        case MxFrequencyOption::FREQ_450MHz:
+        case MxFrequencyOption::FREQ_500MHz:
+        case MxFrequencyOption::FREQ_600MHz:
+            return MxVoltageOption::VOLT_700mV;
+        case MxFrequencyOption::FREQ_700MHz:
+            return MxVoltageOption::VOLT_750mV;
+        case MxFrequencyOption::FREQ_750MHz:
+            return MxVoltageOption::VOLT_760mV;
+        case MxFrequencyOption::FREQ_800MHz:
+        case MxFrequencyOption::FREQ_850MHz:
+            return MxVoltageOption::VOLT_780mV;
+        default:
+            throw std::invalid_argument("Invalid frequency option.");
+    }
+}
+

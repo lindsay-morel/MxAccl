@@ -8,6 +8,13 @@ target_link_libraries(${MXACCL_DYNAMIC} memx pthread dl uuid)
 
 target_compile_options(${MXACCL_DYNAMIC} PRIVATE -Werror)
 
+install(TARGETS ${MXACCL_DYNAMIC}
+        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        PUBLIC_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+       )
+
+install(DIRECTORY ${MX_API_DIR}/include/memx/ DESTINATION include/memx)
+
 if(DEFINED DISABLE_DAEMON)
   target_link_libraries(${MXACCL_DYNAMIC})
 else()

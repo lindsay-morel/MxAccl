@@ -12,6 +12,7 @@
 #include <memx/accl/utils/featureMap.h>
 #include <memx/accl/utils/path.h>
 #include <memx/accl/DeviceManager.h>
+#include <memx/accl/utils/mxTypes.h>
 
 using namespace std;
 struct daemon_items;
@@ -217,6 +218,47 @@ namespace MX
       */
       MEMX_API_EXPORT void set_parallel_fmap_convert(int num_threads, int model_idx=0);
 
+      /**
+         * @brief Checks if power consumption data can be retrieved for the connected modules.
+         * 
+         * @return true if power consumption data is available, false otherwise.
+       */
+      MEMX_API_EXPORT bool can_get_power_consumption();
+
+      /**
+         * @brief Retrieves the average power consumption of all connected devices.
+         * 
+         * @return A reference to a vector containing the average power consumption values (in watts) for all devices.
+       */
+      MEMX_API_EXPORT const std::vector<float>& get_avg_power_all_devices();
+
+      /**
+         * @brief Retrieves the average temperature of all connected devices.
+         * 
+         * @return A reference to a vector containing the average temperature values (in degrees Celsius) for all devices.
+       */
+      MEMX_API_EXPORT const std::vector<float>& get_avg_temperature_all_devices();
+
+      /**
+         * @brief Retrieves temperatures of all chips across all open devices
+         * 
+         * @return A reference to a vector<vector> containing the average temperature values (in degrees Celsius) for all devices.
+       */
+      MEMX_API_EXPORT const std::vector<std::vector<uint64_t>>& get_chip_temperatures_all_devices();
+
+
+      /**
+         * @brief Sets the operating frequency of the device.
+         * 
+         * @note This function must be called before invoking `connect_dfp()`. 
+         *       Calling it after `connect_dfp()` has will throw runtim error.
+         * 
+         * @param freq_option The desired frequency option. Defaults to 600 MHz if not specified.
+         * @return true if the frequency was successfully set, false otherwise.
+       */
+      MEMX_API_EXPORT bool set_operating_frequency(MX::Types::MxFrequencyOption freq_option = MX::Types::MxFrequencyOption::FREQ_600MHz);
+
+
     private:
       std::filesystem::path dfp_path;
       std::vector<std::filesystem::path> dfp_paths;
@@ -248,6 +290,7 @@ namespace MX
       void local_heartbeat_fun();
       std::atomic_bool heartbeat_run;
       std::atomic_bool local_heartbeat_run;
+
     };
   } // namespace Runtime
 } // namespace MX

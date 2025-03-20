@@ -107,9 +107,9 @@ int MxAccl::connect_dfp(const uint8_t *dfp_bytes, std::vector<int>& device_ids_t
     }
 
     if(device_ids_to_use.empty()){
-        throw runtime_error("device_ids_to_use parameter cannot be empty");
+        throw std::runtime_error("device_ids_to_use parameter cannot be empty");
     }
-
+    
     device_ids_ = device_ids_to_use;
 
   #ifndef DISABLE_DAEMON
@@ -452,3 +452,69 @@ void MxAccl::local_heartbeat_fun(){
   #endif
 }
 
+
+bool MxAccl::can_get_power_consumption(){
+    // std::cout<<"Let's check power data is possible or not \n";
+    if(device_manager== NULL){
+        return false;
+    }
+    else
+        return device_manager->power_data_possible_or_no();
+
+}
+
+const std::vector<float>&  MxAccl::get_avg_power_all_devices(){
+
+    if(device_manager== NULL || device_manager->power_data_possible_or_no() == false){
+        throw std::runtime_error("Running in Shared Mode! Cannot get power details - run in local mode for power data");
+    }
+    else{
+        return device_manager->get_avg_power_all_open_devices();
+    }
+}
+
+
+const std::vector<float>&  MxAccl::get_avg_temperature_all_devices(){
+
+    if(device_manager== NULL ){
+        throw std::runtime_error("Running in Remote Mode! Cannot get temperature details - run in local mode for power data");
+    }
+    else{
+        return device_manager->get_avg_temperature_all_open_devices();
+    }
+}
+
+const std::vector<std::vector<uint64_t>>&  MxAccl::get_chip_temperatures_all_devices(){
+
+    if(device_manager== NULL ){
+        throw std::runtime_error("Running in Remote Mode! Cannot get temperature details - run in local mode for power data");
+    }
+    else{
+        return device_manager->get_chip_temperature_all_open_devices();
+    }
+}
+
+
+bool MxAccl::set_operating_frequency(MxFrequencyOption freq_option) {
+    if(setup_status){
+        throw std::runtime_error("Device previously configured; cannot set frequency! Call before connecting to DFP.");
+    }
+    else {
+        if(device_manager == nullptr) {
+            throw std::runtime_error("Remote mode: setting frequency is not supported yet!");
+        }
+        else {
+            // Convert TOPSOption enum to its corresponding frequency
+            uint16_t frequency = static_cast<uint16_t>(freq_option);
+            
+            // Call set_frequency on DeviceManager
+            device_manager->set_frequency(frequency);
+            
+            // Set voltage also
+            MX::Types::MxVoltageOption volt_option = MX::Types::getVoltageFromFrequency(freq_option);
+            uint16_t volt = static_cast<uint16_t>(volt_option);
+            device_manager->set_volt(volt);
+            return true;
+        }
+    }
+}

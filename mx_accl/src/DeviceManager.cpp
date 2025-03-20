@@ -25,6 +25,7 @@ DeviceManager::DeviceManager(void* stub, bool server_mode):stub_(stub){
     required_devices = 0;
 
     server_mode_ = server_mode;
+    read_power_mode();
     // let' get all devices and manage them
     // this->get_available_devices();
 }
@@ -205,74 +206,82 @@ mx_retval_t DeviceManager::throw_device_not_available_exception(int pdevice_id){
     return ret;
 }
 
+void DeviceManager::read_power_mode(){
+
+    #ifdef __linux__
+    // LINUX READ FILE
+
+        if(std::filesystem::exists("/etc/memryx/power.conf")){
+
+            // read each line
+            std::ifstream fd("/etc/memryx/power.conf");
+            for( std::string line; getline( fd, line ); ){
+                if(line[0] == '#')
+                    continue;
+                std::string varname = line.substr(0,6);
+                if(varname == "FREQ4C"){
+                    std::string val = line.substr(7,3);
+                    c4_freq = (uint16_t) std::stoi(val);
+                } else if(varname == "VOLT4C"){
+                    std::string val = line.substr(7,3);
+                    c4_volt = (uint16_t) std::stoi(val);
+                } else if(varname == "FREQ2C"){
+                    std::string val = line.substr(7,3);
+                    c2_freq = (uint16_t) std::stoi(val);
+                } else if(varname == "VOLT2C"){
+                    std::string val = line.substr(7,3);
+                    c2_volt = (uint16_t) std::stoi(val);
+                }
+            }
+
+        }
+
+        // else we use the defaults
+
+        #else
+    // Windows: just use defaults for now
+    #endif
+
+}
+
+void DeviceManager::set_frequency(uint16_t freq){
+    // if(num_chips)
+    c4_freq = freq;
+    c2_freq = freq;
+}
+
+void DeviceManager::set_volt(uint16_t volt){
+    c4_volt = volt;
+    c2_volt = volt; 
+
+}
 
 void DeviceManager::set_power_mode(int device_id, int num_chips){
 
-  #ifdef __GNUC__
+    #ifdef __GNUC__
     // ignore the fact this variable is unused, to satisfy -Werror
     __attribute__((unused)) memx_status status;
-  #else
+    #else
     // else we're kind of stuck, lol
     memx_status status;
-  #endif
-
-    uint16_t c4_freq = 600;
-    uint16_t c4_volt = 700;
-    uint16_t c2_freq = 600;
-    uint16_t c2_volt = 700;
-   
-  #ifdef __linux__
-    // LINUX READ FILE
-
-    if(std::filesystem::exists("/etc/memryx/power.conf")){
-
-        // read each line
-        std::ifstream fd("/etc/memryx/power.conf");
-        for( std::string line; getline( fd, line ); ){
-            if(line[0] == '#')
-                continue;
-            std::string varname = line.substr(0,6);
-            if(varname == "FREQ4C"){
-                std::string val = line.substr(7,3);
-                c4_freq = (uint16_t) std::stoi(val);
-            } else if(varname == "VOLT4C"){
-                std::string val = line.substr(7,3);
-                c4_volt = (uint16_t) std::stoi(val);
-            } else if(varname == "FREQ2C"){
-                std::string val = line.substr(7,3);
-                c2_freq = (uint16_t) std::stoi(val);
-            } else if(varname == "VOLT2C"){
-                std::string val = line.substr(7,3);
-                c2_volt = (uint16_t) std::stoi(val);
-            }
+    #endif
+    
+    #ifdef __linux__
+        // SET THE STUFF
+        if(num_chips == 4){
+            status = memx_set_feature(device_id, 0, OPCODE_SET_FREQUENCY, c4_freq);
+            status = memx_set_feature(device_id, 1, OPCODE_SET_FREQUENCY, c4_freq);
+            status = memx_set_feature(device_id, 2, OPCODE_SET_FREQUENCY, c4_freq);
+            status = memx_set_feature(device_id, 3, OPCODE_SET_FREQUENCY, c4_freq);
+            status = memx_set_feature(device_id, 0, OPCODE_SET_VOLTAGE, c4_volt);
+        } else if(num_chips == 2){
+            status = memx_set_feature(device_id, 0, OPCODE_SET_FREQUENCY, c2_freq);
+            status = memx_set_feature(device_id, 1, OPCODE_SET_FREQUENCY, c2_freq);
+            status = memx_set_feature(device_id, 0, OPCODE_SET_VOLTAGE, c2_volt);
         }
-
-    }
-
-    // else we use the defaults
-
-  #else
-    // Windows: just use defaults for now
-  #endif
-
-#ifdef __linux__
-    // SET THE STUFF
-    if(num_chips == 4){
-        status = memx_set_feature(device_id, 0, OPCODE_SET_FREQUENCY, c4_freq);
-        status = memx_set_feature(device_id, 1, OPCODE_SET_FREQUENCY, c4_freq);
-        status = memx_set_feature(device_id, 2, OPCODE_SET_FREQUENCY, c4_freq);
-        status = memx_set_feature(device_id, 3, OPCODE_SET_FREQUENCY, c4_freq);
-        status = memx_set_feature(device_id, 0, OPCODE_SET_VOLTAGE, c4_volt);
-    } else if(num_chips == 2){
-        status = memx_set_feature(device_id, 0, OPCODE_SET_FREQUENCY, c2_freq);
-        status = memx_set_feature(device_id, 1, OPCODE_SET_FREQUENCY, c2_freq);
-        status = memx_set_feature(device_id, 0, OPCODE_SET_VOLTAGE, c2_volt);
-    }
-#else
-    //Not supported for windows currently
-#endif
-
-
+    #else
+        //Not supported for windows currently
+    #endif
 }
 
 
@@ -370,6 +379,12 @@ mx_retval_t DeviceManager::setup_mxa(int dfp_tag, std::vector<int>& pgroup_ids){
     open_devices.clear();
     dfp_mxa_map.at(dfp_tag).context_ids_vector.clear();
     open_devices.reserve(required_devices);
+    isflashmodule_vec.clear();
+    isflashmodule_vec.reserve(required_devices); 
+    average_power.clear();
+    average_power.reserve(required_devices); 
+    average_temperature.clear();
+    average_temperature.reserve(required_devices); 
 
     mx_retval_t config_ret(true);
 
@@ -398,6 +413,7 @@ mx_retval_t DeviceManager::setup_mxa(int dfp_tag, std::vector<int>& pgroup_ids){
        
     }
 
+    identify_flash_modules(); // fills out the bollean vector with if the device is mxmf or not
     return config_ret;
 }
 
@@ -641,13 +657,117 @@ int DeviceManager::get_num_outports(int dfp_tag){
     return dfp_mxa_map.at(dfp_tag).dfp_meta.num_outports;
 }
 
-// void DeviceManager::cleanup_all_setup_maps(){
-    
-//     DeviceManager::dfp_mxa_map.clear();
-//     DeviceManager::available_mxa_device_map.clear();
-// }
+void DeviceManager::identify_flash_modules() {
 
+  #ifdef __linux__
+    // MXM2 is only supported on Linux for now!
+    for(int i = 0;  i < (int)open_devices.size(); i++){
+        int d_id = open_devices[i];
+        std::string filepath = "/sys/memx" + std::to_string(d_id)+"/verinfo";
+        std::ifstream file(filepath);
+        if (!file.is_open()) {
+            std::cerr << "Error: Unable to open file " << filepath << std::endl;
+            // return false;
+            isflashmodule_vec[i] = false;
+            continue;
+        }
+
+        std::string line;
+        while (std::getline(file, line)) {
+            size_t pos = line.find("BootMode=");
+            if (pos != std::string::npos) {
+                std::string bootMode = line.substr(pos + 9); // Extract value after "BootMode="
+                if(bootMode.find("QSPI") != std::string::npos){ // finding QSPI and if available (npos is no position)
+                    isflashmodule_vec.push_back( true);
+                }
+                else{ // if PCIE
+                    uint64_t power =0 ;
+                    memx_status status = memx_get_feature(d_id, 0, OPCODE_GET_POWER, &power);
+                    if(memx_status_no_error(status))
+                        isflashmodule_vec.push_back(false);
+                    else 
+                        isflashmodule_vec.push_back(true);
+                }
+            }
+        }
+        average_power.push_back(0.0);
+        average_temperature.push_back(0.0);
+        chip_temperatures.emplace_back(4, 0.0f);
+    }
+  #else
+    // don't support on Windows yet!
+    for(int i = 0;  i < (int)open_devices.size(); i++){
+        isflashmodule_vec[i] = false;
+    }
+  #endif
+
+    // If any of the connected modules is / are MXM-F we do not return power data : All the modules should be MXM-2 to get average power
+    // returns `true` if all the values in isflashmodule_vec is `false` else returns `false`
+    this->can_return_power_data = !std::any_of(isflashmodule_vec.begin(), isflashmodule_vec.end(), [](bool val) { return val; });
+}
+
+bool DeviceManager::power_data_possible_or_no(){
+    return can_return_power_data;
+}
+
+
+const std::vector<float>& DeviceManager::get_avg_power_all_open_devices(){
+
+    for(size_t i = 0 ; i<open_devices.size() ; i++){
+
+        int device_id = open_devices[i];
+        if(!isflashmodule_vec[i]){
+            float device_avg_power = 0;
+            for (uint8_t chip_num = 0; chip_num < 4; chip_num++) {
+                    uint64_t power=0;
+                    memx_get_feature(device_id, chip_num, OPCODE_GET_POWER, &power);
+                    device_avg_power += power;
+                }
+                average_power[i] = device_avg_power * 0.25f;
+            }
+        else{
+            std::cerr<<"MXM - F connected cannot get power value \n";
+            average_power[i] = -1.0f;
+        }
+    }
+    return average_power;
+}
+
+const std::vector<float>& DeviceManager::get_avg_temperature_all_open_devices(){
+
+    for(size_t i = 0 ; i<open_devices.size() ; i++){
+        int device_id = open_devices[i];
+        float device_avg_temp = 0;
+        for (uint8_t chip_num = 0; chip_num < 4; chip_num++) {
+                uint64_t temperature=0;
+                memx_get_feature(device_id, chip_num, OPCODE_GET_TEMPERATURE, &temperature);                
+                device_avg_temp += temperature;
+            }
+            average_temperature[i] = device_avg_temp * 0.25f;
+    }
+    return average_temperature;
+}
+
+const std::vector<std::vector<uint64_t>>& DeviceManager::get_chip_temperature_all_open_devices(){
+
+    for(size_t i = 0 ; i<open_devices.size() ; i++){
+
+        int device_id = open_devices[i];
+        for (uint8_t chip_num = 0; chip_num < 4; chip_num++) {
+                uint64_t temperature=0;
+                memx_get_feature(device_id, chip_num, OPCODE_GET_TEMPERATURE, &temperature);                
+                chip_temperatures[i][chip_num] = temperature;
+            }
+    }
+    return chip_temperatures;
+}
 /*
+void DeviceManager::cleanup_all_setup_maps(){
+    
+    DeviceManager::dfp_mxa_map.clear();
+    DeviceManager::available_mxa_device_map.clear();
+}
+
 // Additional get function disabled for now but might need later
 
 float DeviceManager::get_dfp_mxa_gen(){

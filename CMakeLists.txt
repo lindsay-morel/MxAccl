@@ -22,7 +22,7 @@ set(CMAKE_X86_FLAGS_BASE "-mpopcnt -msse -msse2 -msse3 -mssse3 -msse4.1 -msse4.2
 set(CMAKE_X86_FLAGS_AVX2 "-mavx -mavx2 -mfma -mbmi -mbmi2 -maes -mf16c -mfsgsbase -mlzcnt -mmovbe -mxsave")
 
 # Option to select build type (Release or Debug)
-set(BUILD_TYPE "Release" CACHE STRING "Build type (Release or Debug or Packaging)")
+set(BUILD_TYPE "Release" CACHE STRING "Build type (Release or Debug or Packaging or Regression)")
 if(NOT CMAKE_BUILD_TYPE)
     message(STATUS "Setting build type to '${BUILD_TYPE}' as none was specified.")
     set(CMAKE_BUILD_TYPE "${BUILD_TYPE}" CACHE STRING "Choose the type of build." FORCE)
@@ -53,20 +53,20 @@ if (CMAKE_SYSTEM_PROCESSOR MATCHES "(x86)|(X86)|(amd64)|(AMD64)|(x86_64)|(X86_64
     if(DEFINED DISABLE_DAEMON)
     set(
       CMAKE_C_FLAGS
-      "${CMAKE_C_FLAGS} -Wall -pipe -fPIC -O3 ${CMAKE_X86_FLAGS_BASE} ${CMAKE_X86_FLAGS_AVX2} -mtune=generic -fopenmp"
+      "${CMAKE_C_FLAGS} -Wall -pipe -fPIC -O3 -ffast-math ${CMAKE_X86_FLAGS_BASE} ${CMAKE_X86_FLAGS_AVX2} -mtune=generic -fopenmp"
     )
     set(
       CMAKE_CXX_FLAGS
-      "${CMAKE_CXX_FLAGS} -Wall -pipe -fPIC -O3 ${CMAKE_X86_FLAGS_BASE} ${CMAKE_X86_FLAGS_AVX2} -mtune=generic -fopenmp"
+      "${CMAKE_CXX_FLAGS} -Wall -pipe -fPIC -O3 -ffast-math ${CMAKE_X86_FLAGS_BASE} ${CMAKE_X86_FLAGS_AVX2} -mtune=generic -fopenmp"
     )
   else()
     set(
       CMAKE_C_FLAGS
-      "${CMAKE_C_FLAGS} -fvisibility=hidden -Wall -Wextra -pipe -fPIC -static-libgcc -static-libstdc++ -O3 ${CMAKE_X86_FLAGS_BASE} ${CMAKE_X86_FLAGS_AVX2} -mtune=generic -fopenmp -Wl,-gc-sections -Wl,--exclude-libs,ALL"
+      "${CMAKE_C_FLAGS} -fvisibility=hidden -Wall -Wextra -pipe -fPIC -static-libgcc -static-libstdc++ -O3 -ffast-math ${CMAKE_X86_FLAGS_BASE} ${CMAKE_X86_FLAGS_AVX2} -mtune=generic -fopenmp -Wl,-gc-sections -Wl,--exclude-libs,ALL"
     )
     set(
       CMAKE_CXX_FLAGS
-      "${CMAKE_CXX_FLAGS} -fvisibility=hidden -Wall -Wextra -pipe -fPIC -static-libgcc -static-libstdc++ -O3 ${CMAKE_X86_FLAGS_BASE} ${CMAKE_X86_FLAGS_AVX2} -mtune=generic -fopenmp -Wl,-gc-sections -Wl,--exclude-libs,ALL"
+      "${CMAKE_CXX_FLAGS} -fvisibility=hidden -Wall -Wextra -pipe -fPIC -static-libgcc -static-libstdc++ -O3 -ffast-math ${CMAKE_X86_FLAGS_BASE} ${CMAKE_X86_FLAGS_AVX2} -mtune=generic -fopenmp -Wl,-gc-sections -Wl,--exclude-libs,ALL"
     )
   endif()
 
@@ -75,30 +75,30 @@ elseif (CMAKE_SYSTEM_PROCESSOR MATCHES "(aarch64)|(AARCH64)|(arm64)|(ARM64)")
     if(DEFINED DISABLE_DAEMON)
     set(
       CMAKE_C_FLAGS
-      "${CMAKE_C_FLAGS} -Wall -pipe -fPIC -O3 -march=armv8-a+simd -mtune='cortex-a76.cortex-a55' -fopenmp"
+      "${CMAKE_C_FLAGS} -Wall -pipe -fPIC -O3 -ffast-math -march=armv8-a+simd -mtune='cortex-a76.cortex-a55' -fopenmp"
     )
     set(
       CMAKE_CXX_FLAGS
-      "${CMAKE_CXX_FLAGS} -Wall -pipe -fPIC -O3 -march=armv8-a+simd -mtune='cortex-a76.cortex-a55' -fopenmp"
+      "${CMAKE_CXX_FLAGS} -Wall -pipe -fPIC -O3 -ffast-math -march=armv8-a+simd -mtune='cortex-a76.cortex-a55' -fopenmp"
     )
   else()
     set(
       CMAKE_C_FLAGS
-      "${CMAKE_C_FLAGS} -fvisibility=hidden -Wall -Wextra -pipe -fPIC -static-libgcc -static-libstdc++ -O3 -march=armv8-a+simd -mtune='cortex-a76.cortex-a55' -fopenmp -Wl,-gc-sections -Wl,--exclude-libs,ALL"
+      "${CMAKE_C_FLAGS} -fvisibility=hidden -Wall -Wextra -pipe -fPIC -static-libgcc -static-libstdc++ -O3 -ffast-math -march=armv8-a+simd -mtune='cortex-a76.cortex-a55' -fopenmp -Wl,-gc-sections -Wl,--exclude-libs,ALL"
     )
     set(
       CMAKE_CXX_FLAGS
-      "${CMAKE_CXX_FLAGS} -fvisibility=hidden -Wall -Wextra -pipe -fPIC -static-libgcc -static-libstdc++ -O3 -march=armv8-a+simd -mtune='cortex-a76.cortex-a55' -fopenmp -Wl,-gc-sections -Wl,--exclude-libs,ALL"
+      "${CMAKE_CXX_FLAGS} -fvisibility=hidden -Wall -Wextra -pipe -fPIC -static-libgcc -static-libstdc++ -O3 -ffast-math -march=armv8-a+simd -mtune='cortex-a76.cortex-a55' -fopenmp -Wl,-gc-sections -Wl,--exclude-libs,ALL"
     )
   endif()
 elseif (CMAKE_SYSTEM_PROCESSOR MATCHES "(riscv64)|(RISCV64)|(RV64)|(rv64gc)")
   set(
     CMAKE_C_FLAGS
-    "${CMAKE_C_FLAGS} -Wall -Wextra -pipe -fPIC -O3 -march=rv64gc_zba_zbb_zbs -fopenmp -Wl,-gc-sections -Wl,--exclude-libs,ALL"
+    "${CMAKE_C_FLAGS} -Wall -Wextra -pipe -fPIC -O3 -ffast-math -march=rv64gc_zba_zbb_zbs -fopenmp -Wl,-gc-sections -Wl,--exclude-libs,ALL"
   )
   set(
     CMAKE_CXX_FLAGS
-    "${CMAKE_CXX_FLAGS} -Wall -Wextra -pipe -fPIC -O3 -march=rv64gc_zba_zbb_zbs -fopenmp -Wl,-gc-sections -Wl,--exclude-libs,ALL"
+    "${CMAKE_CXX_FLAGS} -Wall -Wextra -pipe -fPIC -O3 -ffast-math -march=rv64gc_zba_zbb_zbs -fopenmp -Wl,-gc-sections -Wl,--exclude-libs,ALL"
   )
 endif()
 
@@ -108,7 +108,7 @@ if(NOT DEFINED DISABLE_DAEMON)
   # Proto file
   get_filename_component(mx_proto "mx_proc.proto" ABSOLUTE)
   get_filename_component(mx_proto_path "${mx_proto}" PATH)
-  
+
   # Generated sources
   set(mx_proto_srcs "${CMAKE_CURRENT_BINARY_DIR}/mx_proc.pb.cc")
   set(mx_proto_hdrs "${CMAKE_CURRENT_BINARY_DIR}/mx_proc.pb.h")
@@ -123,10 +123,10 @@ if(NOT DEFINED DISABLE_DAEMON)
           --plugin=protoc-gen-grpc="${_GRPC_CPP_PLUGIN_EXECUTABLE}"
           "${mx_proto}"
         DEPENDS "${mx_proto}")
-  
+
   # Include generated *.pb.h files
   include_directories("${CMAKE_CURRENT_BINARY_DIR}")
-  
+
   # mx_grpc_proto
   add_library(mx_grpc_proto
     ${mx_grpc_srcs}
@@ -137,7 +137,7 @@ if(NOT DEFINED DISABLE_DAEMON)
     ${_REFLECTION}
     ${_GRPC_GRPCPP}
     ${_PROTOBUF_LIBPROTOBUF})
-  
+
   set(MX_GRPC_LIB "mx_grpc_proto")
 
 endif()

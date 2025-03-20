@@ -1,3 +1,33 @@
+memx-accl (1.2.1-2) stable; urgency=medium
+
+    * acclBench bugfix
+
+ -- MemryX <no-reply@memryx.com>  Mon, 17 Mar 2025 00:00:01 -0500
+
+memx-accl (1.2.1-1) stable; urgency=medium
+
+    * Add temp and power reporting support for upcoming new MX3 SKU
+
+ -- MemryX <no-reply@memryx.com>  Mon, 17 Mar 2025 00:00:00 -0500
+
+memx-accl (1.2.0-5) stable; urgency=medium
+
+    * SDK 1.2 stable
+
+ -- MemryX <no-reply@memryx.com>  Tue, 4 Mar 2025 00:00:00 -0500
+
+memx-accl (1.2.0-4) testing; urgency=medium
+
+    * remove unnecessary ssl/sha.h include
+
+ -- MemryX <no-reply@memryx.com>  Mon, 3 Mar 2025 00:00:00 -0500
+
+memx-accl (1.2.0-3) testing; urgency=medium
+
+    * add DFP 1p2_compatible check
+
+ -- MemryX <no-reply@memryx.com>  Wed, 26 Feb 2025 00:00:00 -0500
+
 memx-accl (1.2.0-2) testing; urgency=medium
 
     * split the daemon into the mxa-manager package
