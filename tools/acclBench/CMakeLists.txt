@@ -15,3 +15,5 @@ file(GLOB local_src
 add_executable(${app_name} ${local_src})
 
 target_link_libraries(${app_name} mx_accl )
+
+install(TARGETS ${app_name} DESTINATION ${CMAKE_INSTALL_BINDIR})
