@@ -18,6 +18,7 @@ message(STATUS "MX_API_DIR  set to " ${MX_API_DIR})
 get_filename_component(MX_API_BUILD_DIR "build" REALPATH)
 message(STATUS "MX_API_BUILD_DIR  set to " ${MX_API_BUILD_DIR})
 
+# Compiler CXXFLAGS can be forced elsewhere by e.g. yocto meta recipes
 if(DEFINED CMAKE_X86_FLAGS_BASE)
     set(CMAKE_X86_FLAGS_BASE "")
 else()
@@ -28,6 +29,17 @@ if(DEFINED CMAKE_X86_FLAGS_AVX2)
 else()
     set(CMAKE_X86_FLAGS_AVX2 "-mavx -mavx2 -mfma -mbmi -mbmi2 -maes -mf16c -mfsgsbase -mlzcnt -mmovbe -mxsave")
 endif()
+if(DEFINED CMAKE_AARCH64_FLAGS)
+    set(CMAKE_AARCH64_FLAGS "")
+else()
+    set(CMAKE_AARCH64_FLAGS "-march=armv8-a+simd -mtune='cortex-a76.cortex-a55'")
+endif()
+if(DEFINED CMAKE_RISCV_FLAGS)
+    set(CMAKE_RISCV_FLAGS "")
+else()
+    set(CMAKE_RISCV_FLAGS "-march=rv64gc_zba_zbb_zbs")
+endif()
+
 
 # Option to select build type (Release or Debug)
 set(BUILD_TYPE "Release" CACHE STRING "Build type (Release or Debug or Packaging or Regression)")
@@ -83,30 +95,30 @@ elseif (CMAKE_SYSTEM_PROCESSOR MATCHES "(aarch64)|(AARCH64)|(arm64)|(ARM64)")
     if(DEFINED DISABLE_DAEMON)
     set(
       CMAKE_C_FLAGS
-      "${CMAKE_C_FLAGS} -Wall -pipe -fPIC -O3 -ffast-math -march=armv8-a+simd -mtune='cortex-a76.cortex-a55' -fopenmp"
+      "${CMAKE_C_FLAGS} -Wall -pipe -fPIC -O3 -ffast-math ${CMAKE_AARCH64_FLAGS} -fopenmp"
     )
     set(
       CMAKE_CXX_FLAGS
-      "${CMAKE_CXX_FLAGS} -Wall -pipe -fPIC -O3 -ffast-math -march=armv8-a+simd -mtune='cortex-a76.cortex-a55' -fopenmp"
+      "${CMAKE_CXX_FLAGS} -Wall -pipe -fPIC -O3 -ffast-math ${CMAKE_AARCH64_FLAGS} -fopenmp"
     )
   else()
     set(
       CMAKE_C_FLAGS
-      "${CMAKE_C_FLAGS} -fvisibility=hidden -Wall -Wextra -pipe -fPIC -static-libgcc -static-libstdc++ -O3 -ffast-math -march=armv8-a+simd -mtune='cortex-a76.cortex-a55' -fopenmp -Wl,-gc-sections -Wl,--exclude-libs,ALL"
+      "${CMAKE_C_FLAGS} -fvisibility=hidden -Wall -Wextra -pipe -fPIC -static-libgcc -static-libstdc++ -O3 -ffast-math ${CMAKE_AARCH64_FLAGS} -fopenmp -Wl,-gc-sections -Wl,--exclude-libs,ALL"
     )
     set(
       CMAKE_CXX_FLAGS
-      "${CMAKE_CXX_FLAGS} -fvisibility=hidden -Wall -Wextra -pipe -fPIC -static-libgcc -static-libstdc++ -O3 -ffast-math -march=armv8-a+simd -mtune='cortex-a76.cortex-a55' -fopenmp -Wl,-gc-sections -Wl,--exclude-libs,ALL"
+      "${CMAKE_CXX_FLAGS} -fvisibility=hidden -Wall -Wextra -pipe -fPIC -static-libgcc -static-libstdc++ -O3 -ffast-math ${CMAKE_AARCH64_FLAGS} -fopenmp -Wl,-gc-sections -Wl,--exclude-libs,ALL"
     )
   endif()
 elseif (CMAKE_SYSTEM_PROCESSOR MATCHES "(riscv64)|(RISCV64)|(RV64)|(rv64gc)")
   set(
     CMAKE_C_FLAGS
-    "${CMAKE_C_FLAGS} -Wall -Wextra -pipe -fPIC -O3 -ffast-math -march=rv64gc_zba_zbb_zbs -fopenmp -Wl,-gc-sections -Wl,--exclude-libs,ALL"
+    "${CMAKE_C_FLAGS} -Wall -Wextra -pipe -fPIC -O3 -ffast-math ${CMAKE_RISCV_FLAGS} -fopenmp -Wl,-gc-sections -Wl,--exclude-libs,ALL"
   )
   set(
     CMAKE_CXX_FLAGS
-    "${CMAKE_CXX_FLAGS} -Wall -Wextra -pipe -fPIC -O3 -ffast-math -march=rv64gc_zba_zbb_zbs -fopenmp -Wl,-gc-sections -Wl,--exclude-libs,ALL"
+    "${CMAKE_CXX_FLAGS} -Wall -Wextra -pipe -fPIC -O3 -ffast-math ${CMAKE_RISCV_FLAGS} -fopenmp -Wl,-gc-sections -Wl,--exclude-libs,ALL"
   )
 endif()
 
