@@ -18,8 +18,16 @@ message(STATUS "MX_API_DIR  set to " ${MX_API_DIR})
 get_filename_component(MX_API_BUILD_DIR "build" REALPATH)
 message(STATUS "MX_API_BUILD_DIR  set to " ${MX_API_BUILD_DIR})
 
-set(CMAKE_X86_FLAGS_BASE "-mpopcnt -msse -msse2 -msse3 -mssse3 -msse4.1 -msse4.2 -mfxsr -mcx16 -msahf -mpclmul")
-set(CMAKE_X86_FLAGS_AVX2 "-mavx -mavx2 -mfma -mbmi -mbmi2 -maes -mf16c -mfsgsbase -mlzcnt -mmovbe -mxsave")
+if(DEFINED CMAKE_X86_FLAGS_BASE)
+    set(CMAKE_X86_FLAGS_BASE CMAKE_X86_FLAGS_BASE)
+else()
+    set(CMAKE_X86_FLAGS_BASE "-mtune=generic -mpopcnt -msse -msse2 -msse3 -mssse3 -msse4.1 -msse4.2 -mfxsr -mcx16 -msahf -mpclmul")
+endif()
+if(DEFINED CMAKE_X86_FLAGS_AVX2)
+    set(CMAKE_X86_FLAGS_AVX2 CMAKE_X86_FLAGS_AVX2)
+else()
+    set(CMAKE_X86_FLAGS_AVX2 "-mavx -mavx2 -mfma -mbmi -mbmi2 -maes -mf16c -mfsgsbase -mlzcnt -mmovbe -mxsave")
+endif()
 
 # Option to select build type (Release or Debug)
 set(BUILD_TYPE "Release" CACHE STRING "Build type (Release or Debug or Packaging or Regression)")
@@ -53,20 +61,20 @@ if (CMAKE_SYSTEM_PROCESSOR MATCHES "(x86)|(X86)|(amd64)|(AMD64)|(x86_64)|(X86_64
     if(DEFINED DISABLE_DAEMON)
     set(
       CMAKE_C_FLAGS
-      "${CMAKE_C_FLAGS} -Wall -pipe -fPIC -O3 -ffast-math ${CMAKE_X86_FLAGS_BASE} ${CMAKE_X86_FLAGS_AVX2} -mtune=generic -fopenmp"
+      "${CMAKE_C_FLAGS} -Wall -pipe -fPIC -O3 -ffast-math ${CMAKE_X86_FLAGS_BASE} ${CMAKE_X86_FLAGS_AVX2} -fopenmp"
     )
     set(
       CMAKE_CXX_FLAGS
-      "${CMAKE_CXX_FLAGS} -Wall -pipe -fPIC -O3 -ffast-math ${CMAKE_X86_FLAGS_BASE} ${CMAKE_X86_FLAGS_AVX2} -mtune=generic -fopenmp"
+      "${CMAKE_CXX_FLAGS} -Wall -pipe -fPIC -O3 -ffast-math ${CMAKE_X86_FLAGS_BASE} ${CMAKE_X86_FLAGS_AVX2} -fopenmp"
     )
   else()
     set(
       CMAKE_C_FLAGS
-      "${CMAKE_C_FLAGS} -fvisibility=hidden -Wall -Wextra -pipe -fPIC -static-libgcc -static-libstdc++ -O3 -ffast-math ${CMAKE_X86_FLAGS_BASE} ${CMAKE_X86_FLAGS_AVX2} -mtune=generic -fopenmp -Wl,-gc-sections -Wl,--exclude-libs,ALL"
+      "${CMAKE_C_FLAGS} -fvisibility=hidden -Wall -Wextra -pipe -fPIC -static-libgcc -static-libstdc++ -O3 -ffast-math ${CMAKE_X86_FLAGS_BASE} ${CMAKE_X86_FLAGS_AVX2} -fopenmp -Wl,-gc-sections -Wl,--exclude-libs,ALL"
     )
     set(
       CMAKE_CXX_FLAGS
-      "${CMAKE_CXX_FLAGS} -fvisibility=hidden -Wall -Wextra -pipe -fPIC -static-libgcc -static-libstdc++ -O3 -ffast-math ${CMAKE_X86_FLAGS_BASE} ${CMAKE_X86_FLAGS_AVX2} -mtune=generic -fopenmp -Wl,-gc-sections -Wl,--exclude-libs,ALL"
+      "${CMAKE_CXX_FLAGS} -fvisibility=hidden -Wall -Wextra -pipe -fPIC -static-libgcc -static-libstdc++ -O3 -ffast-math ${CMAKE_X86_FLAGS_BASE} ${CMAKE_X86_FLAGS_AVX2} -fopenmp -Wl,-gc-sections -Wl,--exclude-libs,ALL"
     )
   endif()
 
