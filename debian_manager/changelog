@@ -1,3 +1,9 @@
+mxa-manager (1.2.1-3) stable; urgency=medium
+
+    * avg temp reporting fixes
+
+ -- MemryX <no-reply@memryx.com>  Tue, 18 Mar 2025 00:00:00 -0500
+
 mxa-manager (1.2.1-1) stable; urgency=medium
 
     * Add temp and power reporting support for upcoming new MX3 SKU

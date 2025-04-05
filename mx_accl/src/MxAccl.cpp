@@ -474,13 +474,13 @@ const std::vector<float>&  MxAccl::get_avg_power_all_devices(){
 }
 
 
-const std::vector<float>&  MxAccl::get_avg_temperature_all_devices(){
+const std::vector<float>&  MxAccl::get_max_temperature_all_devices(){
 
     if(device_manager== NULL ){
         throw std::runtime_error("Running in Remote Mode! Cannot get temperature details - run in local mode for power data");
     }
     else{
-        return device_manager->get_avg_temperature_all_open_devices();
+        return device_manager->get_max_temperature_all_open_devices();
     }
 }
 

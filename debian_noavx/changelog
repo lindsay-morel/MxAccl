@@ -1,3 +1,15 @@
+memx-accl-noavx (1.2.1-5) stable; urgency=medium
+
+    * acclBench shared mode bug fix
+
+ -- MemryX <no-reply@memryx.com>  Wed, 26 Mar 2025 00:00:00 -0500
+
+memx-accl-noavx (1.2.1-3) stable; urgency=medium
+
+    * more temp averaging fixes
+
+ -- MemryX <no-reply@memryx.com>  Tue, 18 Mar 2025 00:00:00 -0500
+
 memx-accl-noavx (1.2.1-2) stable; urgency=medium
 
     * acclBench bugfix

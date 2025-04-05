@@ -383,8 +383,8 @@ mx_retval_t DeviceManager::setup_mxa(int dfp_tag, std::vector<int>& pgroup_ids){
     isflashmodule_vec.reserve(required_devices); 
     average_power.clear();
     average_power.reserve(required_devices); 
-    average_temperature.clear();
-    average_temperature.reserve(required_devices); 
+    max_temperatures.clear();
+    max_temperatures.reserve(required_devices); 
 
     mx_retval_t config_ret(true);
 
@@ -691,7 +691,7 @@ void DeviceManager::identify_flash_modules() {
             }
         }
         average_power.push_back(0.0);
-        average_temperature.push_back(0.0);
+        max_temperatures.push_back(-999.9f);
         chip_temperatures.emplace_back(4, 0.0f);
     }
   #else
@@ -717,15 +717,10 @@ const std::vector<float>& DeviceManager::get_avg_power_all_open_devices(){
 
         int device_id = open_devices[i];
         if(!isflashmodule_vec[i]){
-            float device_avg_power = 0;
-            for (uint8_t chip_num = 0; chip_num < 4; chip_num++) {
-                    uint64_t power=0;
-                    memx_get_feature(device_id, chip_num, OPCODE_GET_POWER, &power);
-                    device_avg_power += power;
-                }
-                average_power[i] = device_avg_power * 0.25f;
-            }
-        else{
+            uint64_t power=0;
+            memx_get_feature(device_id, 0, OPCODE_GET_POWER, &power);
+            average_power[i] = (float) power;
+        }else{
             std::cerr<<"MXM - F connected cannot get power value \n";
             average_power[i] = -1.0f;
         }
@@ -733,19 +728,24 @@ const std::vector<float>& DeviceManager::get_avg_power_all_open_devices(){
     return average_power;
 }
 
-const std::vector<float>& DeviceManager::get_avg_temperature_all_open_devices(){
+const std::vector<float>& DeviceManager::get_max_temperature_all_open_devices(){
 
     for(size_t i = 0 ; i<open_devices.size() ; i++){
         int device_id = open_devices[i];
-        float device_avg_temp = 0;
+        float device_max_temp = -999.9f;
         for (uint8_t chip_num = 0; chip_num < 4; chip_num++) {
                 uint64_t temperature=0;
-                memx_get_feature(device_id, chip_num, OPCODE_GET_TEMPERATURE, &temperature);                
-                device_avg_temp += temperature;
+                memx_get_feature(device_id, chip_num, OPCODE_GET_TEMPERATURE, &temperature);
+                // subtract 17 due to a driver bug involving -273 on uint8 data!
+                // --> won't be necessary in next driver release
+                temperature -= 17;
+                if(device_max_temp < (float) temperature){
+                    device_max_temp = (float) temperature;
+                }
             }
-            average_temperature[i] = device_avg_temp * 0.25f;
+            max_temperatures[i] = device_max_temp;
     }
-    return average_temperature;
+    return max_temperatures;
 }
 
 const std::vector<std::vector<uint64_t>>& DeviceManager::get_chip_temperature_all_open_devices(){
@@ -756,7 +756,9 @@ const std::vector<std::vector<uint64_t>>& DeviceManager::get_chip_temperature_al
         for (uint8_t chip_num = 0; chip_num < 4; chip_num++) {
                 uint64_t temperature=0;
                 memx_get_feature(device_id, chip_num, OPCODE_GET_TEMPERATURE, &temperature);                
-                chip_temperatures[i][chip_num] = temperature;
+                // subtract 17 due to a driver bug involving -273 on uint8 data!
+                // --> won't be necessary in next driver release
+                chip_temperatures[i][chip_num] = (temperature-17);
             }
     }
     return chip_temperatures;

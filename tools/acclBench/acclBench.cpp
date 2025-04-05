@@ -28,6 +28,8 @@
 #define MD_IDS 1005
 #define DS_AL 1006
 #define NO_COPY 1007
+#define PWR 1008
+#define FRQ 1009
 
 const char  *default_dfp_path = "model/single_ssd_mobilenet_300_MX3.dfp";
 const char  *default_server_addr = "localhost";
@@ -47,6 +49,7 @@ static int num_fmap_convert_threads = 1;
 static bool verbose = false;
 static bool manual_threading = false;
 static bool no_copy = false;
+
 static bool bench_tool = false;
 int ms_done_flag = 0;
 std::atomic_bool runflag;
@@ -77,13 +80,24 @@ std::vector<std::vector<float*>> ifmap_vector;
 std::vector<std::vector<float*>> ofmap_vector;
 std::vector<std::chrono::milliseconds> temp_start_ms_vector;
 std::vector<float> fps_values;
-std::vector<int> fps_avg_counters;;
+std::vector<int> fps_avg_counters;
+
+//Power consumption data 
+static bool get_power_usage = false;
+std::vector<float> power_values;
+std::vector<int> power_avg_counters; 
+
+std::vector<float> temp_values;
+std::vector<int> temp_avg_counters; 
 
 int dfp_num_chips = 0;
 int recv_all_count = 0;
 //Manual threads
 std::thread **stream_send_threads;
 std::thread **stream_recv_threads;
+
+//Frequency 
+MX::Types::MxFrequencyOption frequency = MX::Types::MxFrequencyOption::FREQ_USE_CONF;
 
 //signal handler
 void signal_handler(int p_signal){
@@ -119,7 +133,8 @@ static void print_usage(int argc, char **argv){
                       "--device_ids           MXA device IDs to be used to run benchmark, used in cases of multi device use cases. Takes in a comma separated list of device IDss\n"<<
                       "--ls                   Allows lenient setup in multi device use cases, uses available devices in case if some of the passed IDs are not available.\n"<<
                       "--mt                   Runs benchmark tool with Manual Threading model of c++ API\n"<<
-                      "--no_copy              When set the acclBench will run in no copy mode\n"
+                      "--no_copy              When set the acclBench will run in no copy mode\n" << 
+                      "--set_freq             Override the frequency of connected MXA devices, options = {200,300,400,450,500,600,700,750,800,850} MHz\n"
                       " ";
 }
 
@@ -160,6 +175,8 @@ static const struct option
         {"device_ids", required_argument, 0, MD_IDS},
         {"ls", no_argument, NULL, DS_AL},
         {"no_copy", no_argument, NULL, NO_COPY},
+        {"power", no_argument, NULL, PWR},
+        {"set_freq", required_argument, 0, FRQ},
 
         {0, 0, 0, 0 }};
 
@@ -195,6 +212,22 @@ void print_model_info(MX::Types::MxModelInfo pmodel_info){
     std::cout << "\033[3;33m*************************************************\033[m\n";
 }
 
+MX::Types::MxFrequencyOption get_frequency_option_from_int(int input) {
+        switch (input) {
+            case 200: return MX::Types::MxFrequencyOption::FREQ_200MHz;
+            case 300: return MX::Types::MxFrequencyOption::FREQ_300MHz;
+            case 400: return MX::Types::MxFrequencyOption::FREQ_400MHz;
+            case 450: return MX::Types::MxFrequencyOption::FREQ_450MHz;
+            case 500: return MX::Types::MxFrequencyOption::FREQ_500MHz;
+            case 600: return MX::Types::MxFrequencyOption::FREQ_600MHz;
+            case 700: return MX::Types::MxFrequencyOption::FREQ_700MHz;
+            case 750: return MX::Types::MxFrequencyOption::FREQ_750MHz;
+            case 800: return MX::Types::MxFrequencyOption::FREQ_800MHz;
+            case 850: return MX::Types::MxFrequencyOption::FREQ_850MHz;
+            default:
+                throw std::invalid_argument("Invalid frequency option! Enter a value from options");
+        }
+}
 
 
 void generate_input_data(MX::Types::MxModelInfo pmodel_info, std::vector<float*>& pinput_data){
@@ -258,6 +291,31 @@ void cleanup(){
         }
 }
 
+void get_power_statistics(){
+        const std::vector<float>& avg_power_all_devices = manual_threading ? accl_mt->get_avg_power_all_devices() : accl->get_avg_power_all_devices();
+        for(int i = 0 ; i< avg_power_all_devices.size(); i++){
+                power_avg_counters[i]++;
+                power_values[i] = ((power_values[i]*(power_avg_counters[i]-1))+avg_power_all_devices[i]) / power_avg_counters[i];
+        }
+}
+
+void get_temp_statistics(){
+        const std::vector<float>& avg_temp_all_devices = manual_threading ? accl_mt->get_max_temperature_all_devices() : accl->get_max_temperature_all_devices();
+        for(int i = 0 ; i< avg_temp_all_devices.size(); i++){
+                temp_avg_counters[i]++;
+                temp_values[i] = ((temp_values[i]*(temp_avg_counters[i]-1))+avg_temp_all_devices[i]) / temp_avg_counters[i];
+        }
+}
+
+void get_chip_temp_statistics(){
+        const std::vector<std::vector<uint64_t>>& chip_temp_all_devices = manual_threading ? accl_mt->get_chip_temperatures_all_devices() : accl->get_chip_temperatures_all_devices();
+        for(int i = 0 ; i< chip_temp_all_devices.size(); i++){
+                for(int chip = 0 ; chip<4; chip++){
+                        std::cout<<"Chippp  "<< unsigned(chip)<< " Temperature = "<< chip_temp_all_devices[i][chip] << "\n";
+                }
+                std::cout<<"\n";
+        }
+}
 
 
 bool incallback_ms(vector<const MX::Types::FeatureMap<float>*> dst, int streamLabel){
@@ -302,7 +360,10 @@ bool outcallback_ms(vector<const MX::Types::FeatureMap<float>*> src, int streamL
                 fps_avg_counters[streamLabel]++;
                 fps_values[streamLabel] = ((fps_values[streamLabel]*(fps_avg_counters[streamLabel]-1))+fps) / fps_avg_counters[streamLabel];
                 temp_start_ms_vector[streamLabel] = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch());
-            
+                // if(get_power_usage){
+                //         // std::cout<<"Getting power usage \n";
+                //         get_power_statistics();
+                // }
         }
         recv_frame_count_vector[streamLabel]++;
         return true;
@@ -342,9 +403,66 @@ void display_fps() {
 
         // Print values
         for (size_t i = 0; i < fps_values.size(); ++i) {
-                std::cout << std::setw(10) << model_info_vector[i].model_index << std::setw(10) << i << std::setw(15) << std::fixed << std::setprecision(2) << fps_values[i] << std::endl;
+                std::cout << std::setw(10) << model_info_vector[i].model_index 
+                << std::setw(10) << i << std::setw(15) << std::fixed << std::setprecision(2) 
+                << fps_values[i] << std::endl;
+        }
+        std::cout << std::endl; // Space between tables
+    
+        // Print Temp Statistics if verbose
+        if(!shared_mode){
+                get_temp_statistics();
+                std::cout << std::setw(10) << "Device" << std::setw(15) << "Temp (C)" << std::endl;
+                std::cout << std::setw(25) << std::setfill('-') << "-" << std::endl;
+                std::cout << std::setfill(' ');
+        
+                // Print Power values
+                for (size_t i = 0; i < temp_values.size(); ++i) {
+                std::cout << std::setw(10) << i 
+                        << std::setw(15) << std::fixed << std::setprecision(2) 
+                        << temp_values[i] << std::endl;
+                }
         }
 }
+
+void display_fps_and_power() {
+        // Print FPS Table Header
+        get_power_statistics();
+        get_temp_statistics();
+        std::cout << std::setw(10) << "Model" << std::setw(10) << "Stream" << std::setw(15) << "FPS" << std::endl;
+        std::cout << std::setw(35) << std::setfill('-') << "-" << std::endl;
+        std::cout << std::setfill(' ');
+    
+        // Print FPS values
+        for (size_t i = 0; i < fps_values.size(); ++i) {
+            std::cout << std::setw(10) << model_info_vector[i].model_index 
+                      << std::setw(10) << i 
+                      << std::setw(15) << std::fixed << std::setprecision(2) 
+                      << fps_values[i] << std::endl;
+        }
+    
+        std::cout << std::endl; // Space between tables
+    
+        // Print Power Statistics Table Header
+        std::cout << std::setw(10) << "Device" << std::setw(15) << "Power (W)" << std::setw(15) << "Temp (C)" << std::endl;
+        std::cout << std::setw(40) << std::setfill('-') << "-" << std::endl;
+        std::cout << std::setfill(' ');
+    
+        // Print Power values
+        for (size_t i = 0; i < power_values.size(); ++i) {
+            std::cout << std::setw(10) << i 
+                      << std::setw(15) << std::fixed << std::setprecision(2) 
+                      << power_values[i]/1000
+                      << std::setw(15) << std::fixed << std::setprecision(2) 
+                      << temp_values[i] << std::endl;
+
+        }
+    
+        // Move cursor up to refresh display
+        // std::cout << std::flush;
+        // std::cout << "\033[" << (connected_streams + power_values.size() + 4) << "A";
+        // std::this_thread::sleep_for(std::chrono::seconds(1));
+    }
 
 
 void model_bench(int num_models){
@@ -414,17 +532,29 @@ void model_bench(int num_models){
         }
         if(!bench_tool){
                 while(ms_done_flag < connected_streams){
-                        display_fps();
-                        std::cout<<std::flush;
-                        std::cout << "\033["<<connected_streams+2<<"A";
-                        std::this_thread::sleep_for(std::chrono::seconds(1));
+                        if(!get_power_usage){ 
+                                display_fps();
+                                        std::cout << "\033[" << (connected_streams + temp_values.size() + 5) << "A";
+                        }
+                        else{
+                                display_fps_and_power();
+                                // get_chip_temp_statistics();
+                                std::cout << "\033[" << (connected_streams + power_values.size() + 5) << "A";
+                        }
+                        std::this_thread::sleep_for(std::chrono::seconds(2));
                 }
         }
         
         accl->wait();
 
         if(!bench_tool)
-        display_fps();
+        // display_fps();
+        if(!get_power_usage){ 
+                display_fps();
+        }
+        else{
+                display_fps_and_power();
+        }
 
         accl->stop();
         if(!bench_tool)
@@ -542,10 +672,17 @@ void manual_model_bench(int num_models){
         }
 
         while(runflag.load()){
-                display_fps();
+                if(!get_power_usage){ 
+                        display_fps();
+                        std::cout << "\033[" << ((num_models*num_streams)+ temp_values.size() + 5) << "A";
+                }
+                else{
+                        display_fps_and_power();
+                        std::cout << "\033[" << ((num_models*num_streams)+ power_values.size() + 5) << "A";
+                }
                 std::cout<<std::flush;
-                std::cout << "\033["<<(num_models*num_streams)+2<<"A";
-                std::this_thread::sleep_for(std::chrono::seconds(1));
+                
+                std::this_thread::sleep_for(std::chrono::seconds(2));
                 for(int i = 0; i < (num_models*num_streams); i++){
                         if(recv_frame_count_vector[i] >= frame_count){
                                 recv_all_count++;
@@ -559,7 +696,12 @@ void manual_model_bench(int num_models){
                 }
         }
 
-        display_fps();
+        if(!get_power_usage){ 
+                display_fps();
+        }
+        else{
+                display_fps_and_power();
+        }
         std::cout<<"\n";
         std::chrono::milliseconds duration =
                         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()) - start_ms;
@@ -662,6 +804,7 @@ int main(int argc, char **argv)
                         case 'g':
                                 errno = 0;
                                 grp_id = strtol(optarg, NULL, 0);
+                                
                                 if (errno)
                                         _error_exit(optarg);
                                 break;
@@ -713,6 +856,25 @@ int main(int argc, char **argv)
                         case NO_COPY:
                                 no_copy = true;
                                 break;              
+                        
+                        case PWR:
+                                get_power_usage = true;
+                                break;
+                        case FRQ:
+                                errno = 0;
+                                if(optarg){
+                                        try{
+                                                int freqin = std::stoi(optarg);
+                                                frequency = get_frequency_option_from_int(freqin);
+                                        }
+                                        catch(const std::invalid_argument& e){
+                                                print_usage(argc, argv);
+                                                _error_exit(optarg);
+                                                std::cerr<<e.what()<<"\n";
+                                        }
+                                }
+                                
+                                break; 
 
                         default:
                                 print_usage(argc, argv);
@@ -721,6 +883,10 @@ int main(int argc, char **argv)
          }
 
         signal(SIGINT, signal_handler);
+        if(shared_mode && get_power_usage){
+                std::cout << "\033[1;33mCANNOT GET POWER CONSUMPTION DATA in SHARED MODE\033[0m\n";
+                get_power_usage = false;
+        }
 
 
         if(hello_flag){
@@ -758,11 +924,18 @@ int main(int argc, char **argv)
                 if(manual_threading){
                         if(multi_device_bench){
                                 accl_mt = new MX::Runtime::MxAcclMT(shared_mode, server_addr, server_port_base);
+                                if(frequency != MX::Types::MxFrequencyOption::FREQ_USE_CONF){
+                                    accl_mt->set_operating_frequency(frequency);
+                                }
                                 accl_mt->connect_dfp(dfp_path, device_ids);
                         }
                         else {
                                 accl_mt = new MX::Runtime::MxAcclMT(shared_mode, server_addr, server_port_base);
+                                if(frequency != MX::Types::MxFrequencyOption::FREQ_USE_CONF){
+                                    accl_mt->set_operating_frequency(frequency);
+                                }
                                 accl_mt->connect_dfp(dfp_path, grp_id);
+                                device_ids.push_back(grp_id);
                         }
                         num_models = accl_mt->get_num_models();
                         for(int i=0; i < num_models; i++){
@@ -772,18 +945,45 @@ int main(int argc, char **argv)
                         dfp_num_chips = accl_mt->get_dfp_num_chips();
                         if(verbose)
                                 print_bench_setting_info();
+                        
+                        // Power values set  up
+                        if(get_power_usage){
+                                if(accl_mt->can_get_power_consumption()){
+                                        for(int i = 0; i <  device_ids.size(); i++){
+                                                power_values.push_back(0.00);
+                                                power_avg_counters.push_back(0);
+                                                // temp_values.push_back(0.00);
+                                                // temp_avg_counters.push_back(0);
+                                        }
+                                }
+                                else{
+                                        get_power_usage = false;
+                                        std::cout << "\033[1;33mCANNOT GET POWER CONSUMPTION DATA\033[0m\n";
+                                }
+                        }
+                        for(int i = 0; i <  device_ids.size(); i++){
+                                temp_values.push_back(0.00);
+                                temp_avg_counters.push_back(0);
+                        }   
                         manual_model_bench(num_models);
 
                 }
                 else{
                         if(multi_device_bench){
                                 accl = new MX::Runtime::MxAccl(shared_mode, server_addr, server_port_base);
+                                if(frequency != MX::Types::MxFrequencyOption::FREQ_USE_CONF){
+                                    accl->set_operating_frequency(frequency);
+                                }
                                 accl->connect_dfp(dfp_path, device_ids);
-
+                                // do for all devices
                         }
                         else{
                                 accl = new MX::Runtime::MxAccl(shared_mode, server_addr, server_port_base);
+                                if(frequency != MX::Types::MxFrequencyOption::FREQ_USE_CONF){
+                                    accl->set_operating_frequency(frequency);
+                                }
                                 accl->connect_dfp(dfp_path, grp_id);
+                                device_ids.push_back(grp_id);
                         }
 
                         accl->set_num_workers(num_input_workers,num_output_workers);
@@ -794,6 +994,30 @@ int main(int argc, char **argv)
                         dfp_num_chips = accl->get_dfp_num_chips();
                         if(verbose)
                                 print_bench_setting_info();
+                        
+                        // Power values set  up
+                        if(get_power_usage){
+                                if(accl->can_get_power_consumption()){
+                                        for(int i = 0; i <  device_ids.size(); i++){
+                                                power_values.push_back(0.00);
+                                                power_avg_counters.push_back(0);
+
+                                                // temp_values.push_back(0.00);
+                                                // temp_avg_counters.push_back(0);
+                                        }
+                                }
+                                else{
+                                        get_power_usage = false;
+                                        std::cout << "\033[1;33mCANNOT GET POWER CONSUMPTION DATA\033[0m\n";
+                                }       
+                        }
+
+                        for(int i = 0; i <  device_ids.size(); i++){
+                                temp_values.push_back(0.00);
+                                temp_avg_counters.push_back(0);
+                        }   
+
+
                         model_bench(num_models);
                 }
 

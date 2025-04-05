@@ -26,7 +26,7 @@ namespace MX
 
       /**
        * @brief MxAcclMT constructor
-       *  
+       *
        * @param use_shared_mode This flag is 'false' by default, giving the MxAcclMT object direct control of the MXA. When set to 'true', MxAccl can be used in Shared mode which enables multiple processes on local (or remote) machines to share the MXA, with some potential performance penalty.
        * @param server_ip Server IP to connect to represented as string. Default IP address is 127.0.0.1, which is localhost.
        * @param server_port_base Starting port number as unsigned int, default is 10000. The server will use this port, **and** port+1 and port+2. For example, 10000, 10001, 10002.
@@ -218,28 +218,28 @@ namespace MX
 
       /**
          * @brief Checks if power consumption data can be retrieved for the connected modules.
-         * 
+         *
          * @return true if power consumption data is available, false otherwise.
        */
       MEMX_API_EXPORT bool can_get_power_consumption();
 
       /**
          * @brief Retrieves the average power consumption of all connected devices.
-         * 
+         *
          * @return A reference to a vector containing the average power consumption values (in watts) for all devices.
        */
       MEMX_API_EXPORT const std::vector<float>& get_avg_power_all_devices();
 
       /**
-         * @brief Retrieves the average temperature of all connected devices.
-         * 
-         * @return A reference to a vector containing the average temperature values (in degrees Celsius) for all devices.
+         * @brief Retrieves the current maximum temperature for all connected devices.
+         *
+         * @return A reference to a vector containing the max temperature values (in degrees Celsius) for all devices.
        */
-      MEMX_API_EXPORT const std::vector<float>& get_avg_temperature_all_devices();
+      MEMX_API_EXPORT const std::vector<float>& get_max_temperature_all_devices();
 
       /**
          * @brief Retrieves temperatures of all chips acroos all open devices
-         * 
+         *
          * @return A reference to a vector<vector> containing the average temperature values (in degrees Celsius) for all devices.
        */
       MEMX_API_EXPORT const std::vector<std::vector<uint64_t>>& get_chip_temperatures_all_devices();
@@ -247,10 +247,10 @@ namespace MX
 
       /**
          * @brief Sets the operating frequency of the device.
-         * 
-         * @note This function must be called before invoking `connect_dfp()`. 
+         *
+         * @note This function must be called before invoking `connect_dfp()`.
          *       Calling it after `connect_dfp()` has will throw runtim error.
-         * 
+         *
          * @param freq_option The desired frequency option. Defaults to 600 MHz if not specified.
          * @return true if the frequency was successfully set, false otherwise.
        */
