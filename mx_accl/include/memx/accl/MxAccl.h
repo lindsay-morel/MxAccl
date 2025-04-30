@@ -226,11 +226,11 @@ namespace MX
       MEMX_API_EXPORT bool can_get_power_consumption();
 
       /**
-         * @brief Retrieves the average power consumption of all connected devices.
+         * @brief Retrieves the current power consumption of each connected device
          *
-         * @return A reference to a vector containing the average power consumption values (in watts) for all devices.
+         * @return A reference to a vector containing the current power consumption values (in watts) for all devices.
        */
-      MEMX_API_EXPORT const std::vector<float>& get_avg_power_all_devices();
+      MEMX_API_EXPORT const std::vector<float>& get_power_all_devices();
 
       /**
          * @brief Retrieves the current maximum temperature for all connected devices.
@@ -240,9 +240,9 @@ namespace MX
       MEMX_API_EXPORT const std::vector<float>& get_max_temperature_all_devices();
 
       /**
-         * @brief Retrieves temperatures of all chips across all open devices
+         * @brief Retrieves temperatures of each chips across all open devices
          *
-         * @return A reference to a vector<vector> containing the average temperature values (in degrees Celsius) for all devices.
+         * @return A reference to a vector<vector> containing the current temperature values (in degrees Celsius) for each chip for all devices.
        */
       MEMX_API_EXPORT const std::vector<std::vector<uint64_t>>& get_chip_temperatures_all_devices();
 

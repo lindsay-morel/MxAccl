@@ -68,7 +68,7 @@ namespace MX
         MEMX_API_EXPORT mx_retval_t close_device(int device_id);
         MEMX_API_EXPORT int get_num_outports(int dfp_tag);
         bool power_data_possible_or_no();
-        const std::vector<float>& get_avg_power_all_open_devices();
+        const std::vector<float>& get_power_all_open_devices();
         const std::vector<float>& get_max_temperature_all_open_devices();
         const std::vector<std::vector<uint64_t>>& get_chip_temperature_all_open_devices();
 
@@ -119,8 +119,8 @@ namespace MX
         mx_retval_t try_lock(int grp_id);
         bool server_mode_;
         mx_retval_t device_unlock(int device_id);
-        std::vector<float> average_power;
-        std::vector<float> max_temperatures;
+        std::vector<float> device_powers;
+        std::vector<float> device_max_temperatures;
         std::vector<std::vector<uint64_t>> chip_temperatures;
 
         // Frequency members

@@ -416,13 +416,13 @@ bool MxAcclMT::can_get_power_consumption(){
     }
 }
 
-const std::vector<float>&  MxAcclMT::get_avg_power_all_devices(){
+const std::vector<float>&  MxAcclMT::get_power_all_devices(){
 
     if(device_manager== NULL || device_manager->power_data_possible_or_no() == false){
         throw std::runtime_error("Running in Shared Mode! Cannot get power details - run in local mode for power data");
     }
     else{
-        return device_manager->get_avg_power_all_open_devices();
+        return device_manager->get_power_all_open_devices();
     }
 }
 

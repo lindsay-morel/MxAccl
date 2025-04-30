@@ -16,6 +16,7 @@
 #include <thread>
 #include <iomanip>
 #include <numeric>
+#include <deque>
 
 #include "memx/accl/MxAccl.h"
 #include "memx/accl/MxAcclMT.h"
@@ -41,8 +42,6 @@ static bool shared_mode = false;
 static int server_port_base = 10000;
 static int grp_id = 0;
 static int max_fps = 0;
-std::chrono::milliseconds custom_duration_ms = 0ms;
-float custom_duration =0;
 
 static bool multi_stream_bench = false;
 static int num_fmap_convert_threads = 1;
@@ -73,6 +72,8 @@ int num_devices = 1;
 std::vector<int> device_ids;
 bool multi_device_bench = false;
 // multistream variables
+std::vector<std::chrono::steady_clock::time_point> last_send_time_vector;
+
 std::vector<int> sent_frame_count_vector;
 std::vector<int> recv_frame_count_vector;
 std::vector<MX::Types::MxModelInfo> model_info_vector;
@@ -89,6 +90,10 @@ std::vector<int> power_avg_counters;
 
 std::vector<float> temp_values;
 std::vector<int> temp_avg_counters; 
+
+constexpr size_t POWER_WINDOW_SIZE = 30;
+static std::vector<std::deque<float>> power_windows;
+static std::vector<float> power_window_sums;
 
 int dfp_num_chips = 0;
 int recv_all_count = 0;
@@ -246,7 +251,6 @@ void generate_input_data(MX::Types::MxModelInfo pmodel_info, std::vector<float*>
  
 }
 
-
 void cleanup(){
 
         for(auto ind : ifmap_vector){
@@ -291,13 +295,47 @@ void cleanup(){
         }
 }
 
+/**
+ * @brief Maintain a fixed-size moving average of power per device, freezing updates in the final frames.
+ *
+ * Uses a deque of up to POWER_WINDOW_SIZE samples and a running sum for O(1) average updates.
+ * Once recv_frame_count_vector[i] exceeds frame_count - window.size(), the window no longer changes.
+ */
 void get_power_statistics(){
-        const std::vector<float>& avg_power_all_devices = manual_threading ? accl_mt->get_avg_power_all_devices() : accl->get_avg_power_all_devices();
-        for(int i = 0 ; i< avg_power_all_devices.size(); i++){
-                power_avg_counters[i]++;
-                power_values[i] = ((power_values[i]*(power_avg_counters[i]-1))+avg_power_all_devices[i]) / power_avg_counters[i];
+        const auto& avg = manual_threading
+            ? accl_mt->get_power_all_devices()
+            : accl->get_power_all_devices();
+    
+        for (size_t i = 0; i < avg.size(); ++i) {
+            auto& window = power_windows[i];
+            auto& sum    = power_window_sums[i];
+            int  recv    = recv_frame_count_vector[i];
+            size_t dq    = window.size();
+    
+            // Freeze once we're within the last 'dq' frames
+            if (dq > 0
+                && frame_count >= 2 * static_cast<int>(dq)
+                && recv > frame_count - static_cast<int>(dq)) {
+                   power_values[i] = sum / static_cast<float>(dq);
+                   continue;
+            }
+    
+            // Sliding‐window update
+            float p = avg[i];
+            if (p <= 15000) { // Skip invalid power readings. The module has a power limit of 15W.
+                    window.push_back(p);
+                    sum += p;
+            }
+
+            if (window.size() > POWER_WINDOW_SIZE) {
+                sum -= window.front();
+                window.pop_front();
+            }
+    
+            power_values[i] = sum / static_cast<float>(window.size());
         }
 }
+    
 
 void get_temp_statistics(){
         const std::vector<float>& avg_temp_all_devices = manual_threading ? accl_mt->get_max_temperature_all_devices() : accl->get_max_temperature_all_devices();
@@ -318,22 +356,35 @@ void get_chip_temp_statistics(){
 }
 
 
-bool incallback_ms(vector<const MX::Types::FeatureMap<float>*> dst, int streamLabel){
 
-        if((sent_frame_count_vector[streamLabel]  < frame_count) && runflag.load()){
-                // std::cout<< "incallback called \n";
-                for(int i = 0; i<model_info_vector[streamLabel].num_in_featuremaps; i++){
+bool incallback_ms(vector<const MX::Types::FeatureMap<float>*> dst,int streamLabel)
+{
+        if (max_fps > 0) {
+                using clk = std::chrono::steady_clock;
+                auto interval = std::chrono::microseconds(1'000'000 / max_fps);
+                auto now = clk::now();
+                auto next_allowed = last_send_time_vector[streamLabel] + interval;
+
+                if (now < next_allowed) {
+                        std::this_thread::sleep_until(next_allowed);
+                        now = clk::now();
+                }
+                last_send_time_vector[streamLabel] = now;
+        }
+
+        if (sent_frame_count_vector[streamLabel] < frame_count && runflag.load()) {
+                for (int i = 0; i < model_info_vector[streamLabel].num_in_featuremaps; ++i) {
                         dst[i]->set_data(ifmap_vector[streamLabel][i], false);
                 }
                 sent_frame_count_vector[streamLabel]++;
                 return true;
         }
-        else{
+        else {
                 ms_done_flag++;
-                
                 return false;
-        }    
+        }
 }
+
 
 bool outcallback_ms(vector<const MX::Types::FeatureMap<float>*> src, int streamLabel){
 
@@ -353,17 +404,10 @@ bool outcallback_ms(vector<const MX::Types::FeatureMap<float>*> src, int streamL
                 std::chrono::milliseconds duration =
                         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()) - temp_start_ms_vector[streamLabel];
 
-                if(max_fps>0 && duration.count()<custom_duration){
-                        duration = custom_duration_ms;
-                }
                 float fps = (float) 50 * 1000 / (float)(duration.count());
                 fps_avg_counters[streamLabel]++;
                 fps_values[streamLabel] = ((fps_values[streamLabel]*(fps_avg_counters[streamLabel]-1))+fps) / fps_avg_counters[streamLabel];
                 temp_start_ms_vector[streamLabel] = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch());
-                // if(get_power_usage){
-                //         // std::cout<<"Getting power usage \n";
-                //         get_power_statistics();
-                // }
         }
         recv_frame_count_vector[streamLabel]++;
         return true;
@@ -404,7 +448,7 @@ void display_fps() {
         // Print values
         for (size_t i = 0; i < fps_values.size(); ++i) {
                 std::cout << std::setw(10) << model_info_vector[i].model_index 
-                << std::setw(10) << i << std::setw(15) << std::fixed << std::setprecision(2) 
+                << std::setw(10) << i << std::setw(15) << std::fixed << std::setprecision(1) 
                 << fps_values[i] << std::endl;
         }
         std::cout << std::endl; // Space between tables
@@ -419,7 +463,7 @@ void display_fps() {
                 // Print Power values
                 for (size_t i = 0; i < temp_values.size(); ++i) {
                 std::cout << std::setw(10) << i 
-                        << std::setw(15) << std::fixed << std::setprecision(2) 
+                        << std::setw(15) << std::fixed << std::setprecision(1) 
                         << temp_values[i] << std::endl;
                 }
         }
@@ -437,7 +481,7 @@ void display_fps_and_power() {
         for (size_t i = 0; i < fps_values.size(); ++i) {
             std::cout << std::setw(10) << model_info_vector[i].model_index 
                       << std::setw(10) << i 
-                      << std::setw(15) << std::fixed << std::setprecision(2) 
+                      << std::setw(15) << std::fixed << std::setprecision(1) 
                       << fps_values[i] << std::endl;
         }
     
@@ -451,9 +495,9 @@ void display_fps_and_power() {
         // Print Power values
         for (size_t i = 0; i < power_values.size(); ++i) {
             std::cout << std::setw(10) << i 
-                      << std::setw(15) << std::fixed << std::setprecision(2) 
+                      << std::setw(15) << std::fixed << std::setprecision(1) 
                       << power_values[i]/1000
-                      << std::setw(15) << std::fixed << std::setprecision(2) 
+                      << std::setw(15) << std::fixed << std::setprecision(1) 
                       << temp_values[i] << std::endl;
 
         }
@@ -477,6 +521,7 @@ void model_bench(int num_models){
         recv_frame_count_vector.reserve(num_models*num_streams);
         temp_start_ms_vector.reserve(num_models*num_streams);
         model_info_vector.reserve(num_models*num_streams);
+        last_send_time_vector.reserve(num_models*num_streams);
 
         for(int model_index = 0; model_index < num_models ; model_index++){
                 MX::Types::MxModelInfo minfo = accl->get_model_info(model_index);
@@ -510,6 +555,11 @@ void model_bench(int num_models){
 
                         sent_frame_count_vector.push_back(0);
                         recv_frame_count_vector.push_back(0);
+                        if (max_fps > 0) {
+                                auto interval = std::chrono::microseconds(1'000'000 / max_fps);
+                                // set every stream’s last_send_time so the first frame goes out immediately
+                                last_send_time_vector.push_back(std::chrono::steady_clock::now() - interval);
+                        }
                         temp_start_ms_vector.push_back(temp_start_ms);
                         fps_values.push_back(0.0);
                         fps_avg_counters.push_back(0);
@@ -534,14 +584,17 @@ void model_bench(int num_models){
                 while(ms_done_flag < connected_streams){
                         if(!get_power_usage){ 
                                 display_fps();
+                                if(!shared_mode)
                                         std::cout << "\033[" << (connected_streams + temp_values.size() + 5) << "A";
+                                else
+                                        std::cout << "\033[" << (connected_streams + 3) << "A";
                         }
                         else{
                                 display_fps_and_power();
                                 // get_chip_temp_statistics();
                                 std::cout << "\033[" << (connected_streams + power_values.size() + 5) << "A";
                         }
-                        std::this_thread::sleep_for(std::chrono::seconds(2));
+                        std::this_thread::sleep_for(std::chrono::milliseconds(100));
                 }
         }
         
@@ -566,6 +619,13 @@ void model_bench(int num_models){
         float fps_per_stream = fps_total / connected_streams;
         std::cout << "\rAverage FPS per stream : "<< fps_per_stream << "\033[m\n";
         std::cout << "\rAverage FPS for DFP    : "<< fps_total << "\033[m\n";
+        if (get_power_usage) {
+                // sum up the last-window power readings (in mW), convert to W
+                float total_mW = std::accumulate(power_values.begin(), power_values.end(), 0.0f);
+                float total_W  = total_mW / 1000.0f;
+                std::cout << "\rPower for DFP          : " << std::fixed << std::setprecision(1)
+                          << total_W << " W\n";
+        }
         if(verbose){
                 std::cout << "\n\n*************************************************\033[m\n";
                 std::cout<<"\n\n";
@@ -575,6 +635,18 @@ void model_bench(int num_models){
 
 void send_data(int stream_label){
         while(sent_frame_count_vector[stream_label]  < frame_count && runflag.load()){
+                if (max_fps > 0) {
+                        using clk = std::chrono::steady_clock;
+                        auto interval = std::chrono::microseconds(1'000'000 / max_fps);
+                        auto now = clk::now();
+                        auto next_allowed = last_send_time_vector[stream_label] + interval;
+        
+                        if (now < next_allowed) {
+                                std::this_thread::sleep_until(next_allowed);
+                                now = clk::now();
+                        }
+                        last_send_time_vector[stream_label] = now;
+                }
                 accl_mt->send_input(ifmap_vector[stream_label], model_info_vector[stream_label].model_index, stream_label, false);
                 sent_frame_count_vector[stream_label]++;
         }
@@ -599,9 +671,6 @@ void receive_data(int model_index,int stream_id_recv){
                         std::chrono::milliseconds duration =
                                 std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()) - temp_start_ms_vector[stream_id_recv];
 
-                        if(max_fps>0 && duration.count()<custom_duration){
-                                duration = custom_duration_ms;
-                        }
                         fps = (float) 50 * 1000 / (float)(duration.count());
                         fps_avg_counters[stream_id_recv]++;
                         fps_values[stream_id_recv] = ((fps_values[stream_id_recv]*(fps_avg_counters[stream_id_recv]-1))+fps) / fps_avg_counters[stream_id_recv];
@@ -628,6 +697,7 @@ void manual_model_bench(int num_models){
         recv_frame_count_vector.reserve(num_models*num_streams);
         temp_start_ms_vector.reserve(num_models*num_streams);
         model_info_vector.reserve(num_models*num_streams);
+        last_send_time_vector.reserve(num_models*num_streams);
         // accl->start(true);
         stream_recv_threads = new std::thread *[num_models*num_streams];
         stream_send_threads = new std::thread *[num_models*num_streams];
@@ -651,6 +721,11 @@ void manual_model_bench(int num_models){
                         temp_start_ms_vector.push_back(temp_start_ms);
                         fps_values.push_back(0.0);
                         fps_avg_counters.push_back(0);
+                        if (max_fps > 0) {
+                                auto interval = std::chrono::microseconds(1'000'000 / max_fps);
+                                // set every stream’s last_send_time so the first frame goes out immediately
+                                last_send_time_vector.push_back(std::chrono::steady_clock::now() - interval);
+                        }
 
                        
 
@@ -674,7 +749,10 @@ void manual_model_bench(int num_models){
         while(runflag.load()){
                 if(!get_power_usage){ 
                         display_fps();
-                        std::cout << "\033[" << ((num_models*num_streams)+ temp_values.size() + 5) << "A";
+                        if(!shared_mode)
+                                std::cout << "\033[" << ((num_models*num_streams)+ temp_values.size() + 5) << "A";
+                        else
+                                std::cout << "\033[" << ((num_models*num_streams)+ 3) << "A";
                 }
                 else{
                         display_fps_and_power();
@@ -902,7 +980,7 @@ int main(int argc, char **argv)
               #ifndef DISABLE_DAEMON
                 // if the pointers aren't equal, user manually set server address
                 if( (server_addr != default_server_addr) || (server_port_base != 10000) || (shared_mode == true) ){
-                    std::cout << "mx_server connection at " << server_addr << ":" << server_port_base << "\n";
+                    std::cout << "mxa_manager connection at " << server_addr << ":" << server_port_base << "\n";
                     if(shared_mode){
                         std::cout << "Mode: SHARED\n\n";
                     } else {
@@ -912,10 +990,6 @@ int main(int argc, char **argv)
               #endif
 
                 runflag.store(true);
-                if(max_fps!=0){
-                        custom_duration = 1000*50/max_fps;
-                        custom_duration_ms = std::chrono::milliseconds(int(custom_duration));
-                }
                 if (dfp_path == NULL){
                         std::cout<< "please specify the dfp file\n";
                         print_usage(argc, argv);
@@ -955,6 +1029,8 @@ int main(int argc, char **argv)
                                                 // temp_values.push_back(0.00);
                                                 // temp_avg_counters.push_back(0);
                                         }
+                                        power_windows.resize(device_ids.size());
+                                        power_window_sums.assign(device_ids.size(), 0.0f);
                                 }
                                 else{
                                         get_power_usage = false;
@@ -1005,6 +1081,8 @@ int main(int argc, char **argv)
                                                 // temp_values.push_back(0.00);
                                                 // temp_avg_counters.push_back(0);
                                         }
+                                        power_windows.resize(device_ids.size());
+                                        power_window_sums.assign(device_ids.size(), 0.0f);
                                 }
                                 else{
                                         get_power_usage = false;

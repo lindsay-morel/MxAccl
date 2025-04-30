@@ -381,10 +381,10 @@ mx_retval_t DeviceManager::setup_mxa(int dfp_tag, std::vector<int>& pgroup_ids){
     open_devices.reserve(required_devices);
     isflashmodule_vec.clear();
     isflashmodule_vec.reserve(required_devices); 
-    average_power.clear();
-    average_power.reserve(required_devices); 
-    max_temperatures.clear();
-    max_temperatures.reserve(required_devices); 
+    device_powers.clear();
+    device_powers.reserve(required_devices); 
+    device_max_temperatures.clear();
+    device_max_temperatures.reserve(required_devices); 
 
     mx_retval_t config_ret(true);
 
@@ -613,8 +613,6 @@ mx_retval_t DeviceManager::init_mx_models(int dfp_tag, std::vector<ModelBase *>*
         uint8_t format = dfp_mxa_map.at(dfp_tag).dfp->input_port(in_ports[0])->format;
         
         if(format == MX_FMT_RGB888){
-            // MxModel<uint8_t> *im = new MxModel<uint8_t>(i, dfp_mxa_map.at(dfp_tag).dfp, &dfp_mxa_map.at(dfp_tag).context_ids_vector);
-            // mxmodel_vector->push_back(im); 
             model_ret.error_flag = false;
             model_ret.error_msg = "int inputs are currently not supported";      
             return model_ret;         
@@ -626,20 +624,6 @@ mx_retval_t DeviceManager::init_mx_models(int dfp_tag, std::vector<ModelBase *>*
     }
     return model_ret;
 }
-
-// bool DeviceManager::dfp_tag_duplicate_check(int dfp_tag){
-//     bool is_tag_duplicate;
-//     auto it = this->dfp_mxa_map.find(dfp_tag);
-//     if(it == this->dfp_mxa_map.end()){
-//         is_tag_duplicate = false;
-//     }
-//     else{  
-//         is_tag_duplicate =  true;
-//     }
-
-//     return is_tag_duplicate;
-
-// }
 
 int DeviceManager::get_dfp_num_chips(int dfp_tag){
     return dfp_mxa_map.at(dfp_tag).dfp_num_chips;
@@ -690,8 +674,8 @@ void DeviceManager::identify_flash_modules() {
                 }
             }
         }
-        average_power.push_back(0.0);
-        max_temperatures.push_back(-999.9f);
+        device_powers.push_back(0.0);
+        device_max_temperatures.push_back(-999.9f);
         chip_temperatures.emplace_back(4, 0.0f);
     }
   #else
@@ -711,7 +695,7 @@ bool DeviceManager::power_data_possible_or_no(){
 }
 
 
-const std::vector<float>& DeviceManager::get_avg_power_all_open_devices(){
+const std::vector<float>& DeviceManager::get_power_all_open_devices(){
 
     for(size_t i = 0 ; i<open_devices.size() ; i++){
 
@@ -719,13 +703,13 @@ const std::vector<float>& DeviceManager::get_avg_power_all_open_devices(){
         if(!isflashmodule_vec[i]){
             uint64_t power=0;
             memx_get_feature(device_id, 0, OPCODE_GET_POWER, &power);
-            average_power[i] = (float) power;
+            device_powers[i] = (float) power;
         }else{
             std::cerr<<"MXM - F connected cannot get power value \n";
-            average_power[i] = -1.0f;
+            device_powers[i] = -1.0f;
         }
     }
-    return average_power;
+    return device_powers;
 }
 
 const std::vector<float>& DeviceManager::get_max_temperature_all_open_devices(){
@@ -736,16 +720,14 @@ const std::vector<float>& DeviceManager::get_max_temperature_all_open_devices(){
         for (uint8_t chip_num = 0; chip_num < 4; chip_num++) {
                 uint64_t temperature=0;
                 memx_get_feature(device_id, chip_num, OPCODE_GET_TEMPERATURE, &temperature);
-                // subtract 17 due to a driver bug involving -273 on uint8 data!
-                // --> won't be necessary in next driver release
                 temperature -= 17;
                 if(device_max_temp < (float) temperature){
                     device_max_temp = (float) temperature;
                 }
             }
-            max_temperatures[i] = device_max_temp;
+            device_max_temperatures[i] = device_max_temp;
     }
-    return max_temperatures;
+    return device_max_temperatures;
 }
 
 const std::vector<std::vector<uint64_t>>& DeviceManager::get_chip_temperature_all_open_devices(){
@@ -756,37 +738,8 @@ const std::vector<std::vector<uint64_t>>& DeviceManager::get_chip_temperature_al
         for (uint8_t chip_num = 0; chip_num < 4; chip_num++) {
                 uint64_t temperature=0;
                 memx_get_feature(device_id, chip_num, OPCODE_GET_TEMPERATURE, &temperature);                
-                // subtract 17 due to a driver bug involving -273 on uint8 data!
-                // --> won't be necessary in next driver release
                 chip_temperatures[i][chip_num] = (temperature-17);
             }
     }
     return chip_temperatures;
 }
-/*
-void DeviceManager::cleanup_all_setup_maps(){
-    
-    DeviceManager::dfp_mxa_map.clear();
-    DeviceManager::available_mxa_device_map.clear();
-}
-
-// Additional get function disabled for now but might need later
-
-float DeviceManager::get_dfp_mxa_gen(){
-    return mxa_gen;
-}
-
-int DeviceManager::get_connected_devices_count(){
-    return all_devices_count;
-
-}
-
-int DeviceManager::get_available_device_count(){
-    return available_devices;
-}
-
-
-Dfp::DfpMeta DeviceManager::get_dfp_meta(){
-    return this->dfp_meta;
-}
-*/
