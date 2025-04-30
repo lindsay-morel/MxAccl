@@ -322,7 +322,11 @@ void get_power_statistics(){
     
             // Sliding‐window update
             float p = avg[i];
-            if (p <= 15000) { // Skip invalid power readings. The module has a power limit of 15W.
+            // Skip invalid power readings. The module has a hard-enforced limit of 15W, so
+            // readings greater than that aren't possible. There's a known bug in the current
+            // MXM2 firmware where the current sensor reports 32768 on occasion. Will be fixed
+            // in an upcoming firmware release.
+            if (p <= 15000) {
                     window.push_back(p);
                     sum += p;
             }
