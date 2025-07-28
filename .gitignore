@@ -47,3 +47,9 @@ samples/windows/CenterNet_Onnx/x64/
 samples/windows/CenterNet_Onnx/.vs/
 samples/windows/CenterNet_Onnx/CenterNet_Onnx.vcxproj.user
 samples/MultiModel/libtorch*
+samples/acclBench/acclBench/
+samples/acclBench/x64/
+samples/acclBench/.vs/
+samples/acclBench/acclBench.vcxproj.user
+
+deps/

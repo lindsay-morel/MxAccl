@@ -1,745 +1,388 @@
+// Copyright (c) 2025 MemryX
+// SPDX-License-Identifier: MPL-2.0
+//
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 #include <unordered_map>
-#include <memx/accl/DeviceManager.h>
 #include <sstream>
 #include <fstream>
+#include <filesystem>
+#include <algorithm>
 
-#ifndef DISABLE_DAEMON
-#include <grpcpp/grpcpp.h>
-#include "mx_proc.grpc.pb.h"
-#endif
+#include "spdlog/spdlog.h"
+
+#include <memx/accl/DeviceManager.h>
+#include <memx/accl/client.h>
 
 using namespace MX::Runtime;
 using namespace MX::Types;
 using namespace MX::Utils;
 using namespace std;
 
-#ifndef DISABLE_DAEMON
-using mxstream::MxService;
-using mxstream::LockData;
-using mxstream::Ping;
+
+DeviceManager::DeviceManager()
+{
+
+    all_devices_count = 0;
+    read_power_mode();
+    discover_done = false;
+    local_device_in_use.clear();
+}
+
+DeviceManager::~DeviceManager()
+{
+}
+
+
+bool DeviceManager::discover_devices_direct()
+{
+    std::lock_guard<std::mutex> lock(m_discover);
+
+    if(discover_done.load()) {
+        spdlog::debug("[DeviceManager] Devices already discovered, skipping discovery.");
+        return true;
+    }
+
+    memx_status status = memx_operation_get_device_count(&all_devices_count);
+    if (memx_status_error(status)) {
+        spdlog::warn("[DeviceManager] Local memx_operation_get_device_count() failed");
+        all_devices_count = 0;
+        return false;
+    }
+
+    if (all_devices_count == 0) {
+        spdlog::warn("[DeviceManager] No Local devices found");
+        return false;
+    }
+
+    device_infos.resize(all_devices_count);
+    local_device_in_use.resize(all_devices_count, false);
+
+    // count chips on all devices
+    for(int d = 0; d < all_devices_count ; d++) {
+        uint64_t hwinfo64 = 0;
+
+        status = memx_get_feature(d, 0, OPCODE_GET_HW_INFO, &hwinfo64);
+        if (memx_status_error(status)) {
+            spdlog::warn("[DeviceManager] Local memx_get_feature() failed for device {}.", d);
+            hwinfo64 = 0;
+        }
+
+        device_infos[d].chip_count = (hwinfo64 & ((uint64_t)0xFFL << 16)) >> 16;
+        device_infos[d].chips_per_group = (hwinfo64 & ((uint64_t)0xFFL << 32)) >> 32;
+        device_infos[d].num_groups = (hwinfo64 & ((uint64_t)0xFFL << 48)) >> 48;
+
+        // figure out the correct MEMX_MPU_GROUP_CONFIG_* value from the number of chips and groups
+        if(device_infos[d].chip_count == 8 && device_infos[d].num_groups == 1) {
+            device_infos[d].current_config = MEMX_MPU_GROUP_CONFIG_ONE_GROUP_EIGHT_MPUS;
+        }
+        else if(device_infos[d].chip_count == 4 && device_infos[d].num_groups == 1) {
+            device_infos[d].current_config = MEMX_MPU_GROUP_CONFIG_ONE_GROUP_FOUR_MPUS;
+        }
+        else if(device_infos[d].chip_count == 2 && device_infos[d].num_groups == 2) {
+            device_infos[d].current_config = MEMX_MPU_GROUP_CONFIG_TWO_GROUP_TWO_MPUS;
+        }
+        else if (device_infos[d].chip_count == 2 && device_infos[d].num_groups == 1) {
+           device_infos[d].current_config = MEMX_MPU_GROUP_CONFIG_ONE_GROUP_TWO_MPUS;
+        }
+        else {
+            // invalid configuration
+            spdlog::error("[DeviceManager] Invalid chip count {} or group count {} for device {}",
+                          device_infos[d].chip_count, device_infos[d].num_groups, d);
+            device_infos[d].current_config = 0;
+        }
+
+        // check frequency and voltage
+        uint64_t freq = 600;
+        int device_chip_count = device_infos[d].chip_count;
+        device_infos[d].freqs.resize(device_chip_count, 0);
+        for(int i = 0; i < device_chip_count; i++) {
+            status = memx_get_feature(d, i, OPCODE_GET_FREQUENCY, &freq);
+            if (memx_status_error(status)) {
+                spdlog::warn("[DeviceManager] Local memx_get_feature() failed for device {}.", d);
+                freq = 600;
+            }
+            device_infos[d].freqs[i] = (uint16_t) freq & 0xFFFF;
+        }
+        uint64_t volt = 700;
+        status = memx_get_feature(d, 0, OPCODE_GET_VOLTAGE, &volt);
+        if (memx_status_error(status)) {
+            spdlog::warn("[DeviceManager] Local memx_get_feature() failed for device {}.", d);
+            volt = 700;
+        }
+        device_infos[d].volt = (uint16_t) volt & 0xFFFF;
+
+        // check if device supports power data
+        uint64_t power = 0;
+        memx_status status = memx_get_feature(d, 0, OPCODE_GET_POWER, &power);
+        if(memx_status_no_error(status) && power > 0 && power < 17000) {
+            device_infos[d].can_get_power_data = true;
+        }
+        else {
+            device_infos[d].can_get_power_data = false;
+        }
+
+    }
+
+    discover_done = true;
+    return true;
+}
+
+
+bool DeviceManager::discover_devices_remote(Client* client)
+{
+    std::lock_guard<std::mutex> lock(m_discover);
+
+    if(discover_done.load()) {
+        spdlog::debug("[DeviceManager] Devices already discovered, skipping discovery.");
+        return true;
+    }
+
+    if(client == nullptr) {
+        spdlog::error("[DeviceManager] Client is null, cannot discover devices remotely.");
+        return false;
+    }
+
+
+    device_infos.clear();
+    device_infos = client->get_device_infos();
+    all_devices_count = device_infos.size();
+    if (all_devices_count == 0) {
+        spdlog::warn("[DeviceManager] No Remote devices found");
+        return false;
+    }
+    local_device_in_use.resize(all_devices_count, false);
+
+    discover_done = true;
+    print_all_devices();
+    return true;
+}
+
+
+void DeviceManager::print_all_devices()
+{
+
+    // print the device_info table for all devices
+    std::cout << "Device ID | Chip Count | Num Groups | is MXM2 |  Freq | Volt" << std::endl;
+    std::cout << "----------|------------|------------|---------|-------|-----" << std::endl;
+    for(int d = 0; d < all_devices_count ; d++) {
+        std::cout << std::setw(9) << int(d) << " | ";
+        std::cout << std::setw(10) << device_infos[d].chip_count << " | ";
+        std::cout << std::setw(10) << device_infos[d].num_groups << " | ";
+        std::cout << std::setw(7)  << (device_infos[d].can_get_power_data ? "Yes" : "No") << " | ";
+        std::cout << std::setw(5)  << device_infos[d].freqs[0] << " | ";
+        std::cout << std::setw(4)  << device_infos[d].volt;
+        std::cout << std::endl;
+    }
+    std::cout << std::endl;
+
+}
+
+void DeviceManager::print_devices_info()
+{
+
+    // print the device_info table for all devices
+    std::cout << "Device ID | Chip Count |  Freq | Volt" << std::endl;
+    std::cout << "----------|------------|-------|-----" << std::endl;
+    for(int d = 0; d < all_devices_count ; d++) {
+        std::cout << std::setw(9) << int(d) << " | ";
+        std::cout << std::setw(10) << device_infos[d].chip_count << " | ";
+        std::cout << std::setw(5)  << device_infos[d].freqs[0] << " | ";
+        std::cout << std::setw(4)  << device_infos[d].volt;
+        std::cout << std::endl;
+    }
+    std::cout << std::endl;
+
+}
+
+
+void DeviceManager::read_power_mode()
+{
+
+#ifdef _WIN32
+    std::string config_path = "C:\\Program Files\\memryx\\power.conf";
+#else
+    std::string config_path = "/etc/memryx/power.conf";
 #endif
 
-DeviceManager::DeviceManager(void* stub, bool server_mode):stub_(stub){
-    
-    all_devices_count = 0;
-    required_devices = 0;
-
-    server_mode_ = server_mode;
-    read_power_mode();
-    // let' get all devices and manage them
-    // this->get_available_devices();
-}
-
-mx_retval_t DeviceManager::opendfp_bytes(const uint8_t *b, int dfp_tag){
-
-    dfp_rt_info ddi;
-    ddi.dfp = new Dfp::DfpObject(b);
-    Dfp::DfpMeta temp_meta = ddi.dfp->get_dfp_meta();
-
-    ddi.is_bytes = true;
-    ddi.dfp_filename_path = std::filesystem::path("<BYTES>");
-    ddi.dfp_num_chips = temp_meta.num_chips;
-    ddi.num_models = temp_meta.num_models;
-    ddi.mxa_gen = temp_meta.mxa_gen;
-    ddi.dfp_meta = temp_meta;
-    ddi.use_multigroup_lb = temp_meta.use_multigroup_lb;
-    ddi.context_ids_vector  = {};
-    ddi.valid = ddi.dfp->valid;
-
-    auto it = this->dfp_mxa_map.find(dfp_tag);
-    if(it == this->dfp_mxa_map.end()){
-        this->dfp_mxa_map.emplace(dfp_tag, std::move(ddi));
-    }
-    else{  
-        it->second = ddi;
-    }
-
-    mx_retval_t ret(ddi.valid);
-    return ret;
-}
-
-mx_retval_t DeviceManager::opendfp(const std::filesystem::path dfp_filename, int dfp_tag){
-
-    dfp_rt_info ddi;
-    ddi.dfp = new Dfp::DfpObject(dfp_filename.string().c_str());
-    Dfp::DfpMeta temp_meta = ddi.dfp->get_dfp_meta();
-
-    ddi.is_bytes = false;
-    ddi.dfp_filename_path = dfp_filename;
-    ddi.dfp_num_chips = temp_meta.num_chips;
-    ddi.num_models = temp_meta.num_models;
-    ddi.mxa_gen = temp_meta.mxa_gen;
-    ddi.dfp_meta = temp_meta;
-    ddi.use_multigroup_lb = temp_meta.use_multigroup_lb;
-    ddi.context_ids_vector  = {};
-    ddi.valid = ddi.dfp->valid;
-
-    auto it = this->dfp_mxa_map.find(dfp_tag);
-    if(it == this->dfp_mxa_map.end()){
-        this->dfp_mxa_map.emplace(dfp_tag, std::move(ddi));
-    }
-    else{  
-        it->second = ddi;
-    }
-
-    mx_retval_t ret(ddi.valid);
-    return ret;
-}
-
-mx_retval_t DeviceManager::try_lock(int grp_id){
-    mx_retval_t ret;
-  #ifndef DISABLE_DAEMON
-    if(stub_!=NULL){
-        LockData request;
-        request.set_group_id(grp_id);
-        Ping reply;
-        grpc::ClientContext context;
-        mxstream::MxService::Stub* local_stub = (mxstream::MxService::Stub*)stub_;
-        grpc::Status status_ = local_stub->try_lock(&context, request, &reply);
-        if (!status_.ok()) {
-            ret.error_flag = false;
-            ret.error_msg = "daemon try_lock request failed; check the status of daemon";
-            return ret;
-        }
-        ret.error_flag = reply.recv();
-        if(!ret.error_flag) ret.error_msg = "Couldn't acquire lock on device "+std::to_string(grp_id);
-        return ret;
-    }
-  #endif
-    if(server_mode_){
-        ret.error_flag = true;
-    } else {
-        ret.error_flag = memx_status_no_error(memx_trylock(grp_id));
-        if(!ret.error_flag) ret.error_msg = "Couldn't acquire lock on device "+std::to_string(grp_id);
-    }
-    return ret;
-}
-
-mx_retval_t DeviceManager::get_available_devices(){
-    
-    mx_retval_t ret;
-    memx_status status = memx_operation_get_device_count(&all_devices_count);
-    if (memx_status_error(status))
-    {
-        ret.error_flag = false;
-        ret.error_msg = "Couldn't get device count";
-        return ret;
-    }
-
-    // MX::Runtime::device_info di;
-    for(int d = 0; d < all_devices_count ; d++){
-        mx_retval_t lock_ret = this->try_lock(d);
-        if(!lock_ret.error_flag){    
-            std::cout<<"device locked - Trying next device \n";
-        }
-        else{
-            MX::Runtime::device_info di;    
-            uint8_t device_chip_count = 0;
-            status = memx_get_total_chip_count(d, &device_chip_count);
-
-            di.chip_count = device_chip_count;
-            di.is_device_open = false;
-            di.number_of_contexts_attached = 0;
-            di.contexts_ids_attached = {};
-            di.current_config = MEMX_MPU_GROUP_CONFIG_ONE_GROUP_FOUR_MPUS;
-            
-            auto device_it = this->available_mxa_device_map.find(d);
-            
-            if(device_it == this->available_mxa_device_map.end()){
-                this->available_mxa_device_map.emplace(d , di);
-                available_devices_id.push_back(d);
+    if(std::filesystem::exists(config_path)) {
+        // read each line
+        std::ifstream fd(config_path);
+        for( std::string line; getline( fd, line ); ) {
+            if(line[0] == '#') {
+                continue;
             }
-            else{
-                device_it->second = di;
+            std::string varname = line.substr(0, 6);
+            if(varname == "FREQ4C") {
+                std::string val = line.substr(7, 3);
+                c4_freq = (uint16_t) std::stoi(val);
             }
-            this->device_unlock(d);
-        }
-    }
-    ret.error_flag = true;
-    return ret;
-}
-
-mx_retval_t DeviceManager::throw_chip_exception(int pdfp_chips, int pdevice_chips, int device_id){
-    mx_retval_t ret;
-    std::ostringstream oss;
-    oss << "this dfp is made for " << pdfp_chips << " but only " << pdevice_chips << " are available on device "<<device_id;
-    ret.error_flag = false;
-    ret.error_msg = oss.str();
-    return ret;
-}
-
-mx_retval_t DeviceManager::throw_mxa_gen_exception(int pdfp_num_chips){
-    mx_retval_t ret;
-    std::ostringstream oss;
-    oss << "this dfp is made for CASCADE gen for " << pdfp_num_chips << "Cannot be configured at runtime \n";
-    ret.error_flag = false;
-    ret.error_msg = oss.str();
-    return ret;
-}
-
-void DeviceManager::print_available_devices(){
-
-    std::cout << "\n\tAvailable Devices: \n\n";
-    if (available_devices_id.empty()) {
-        std::cout << "None";
-    } else {
-            std::cout << "-----------------------------\n";
-            std::cout << "| " << std::setw(10) << "Device ID" << " | " << std::setw(12) << "Chip Count" << " |\n";
-            std::cout << "-----------------------------\n";
-
-            for (size_t i = 0; i < available_devices_id.size(); i++) {
-                int device_id = available_devices_id[i];
-                std::cout << "| " << std::setw(10) << device_id
-                          << " | " << std::setw(12) << available_mxa_device_map.at(device_id).chip_count
-                          << " |\n";
+            else if(varname == "VOLT4C") {
+                std::string val = line.substr(7, 3);
+                c4_volt = (uint16_t) std::stoi(val);
             }
-
-            std::cout << "-----------------------------\n\n";
-    }
-}
-
-mx_retval_t DeviceManager::throw_device_not_available_exception(int pdevice_id){
-    mx_retval_t ret;
-    print_available_devices();
-    ret.error_flag = false;
-    ret.error_msg = "Device " + std::to_string(pdevice_id)+" is not available to use";
-    return ret;
-}
-
-void DeviceManager::read_power_mode(){
-
-    #ifdef __linux__
-    // LINUX READ FILE
-
-        if(std::filesystem::exists("/etc/memryx/power.conf")){
-
-            // read each line
-            std::ifstream fd("/etc/memryx/power.conf");
-            for( std::string line; getline( fd, line ); ){
-                if(line[0] == '#')
-                    continue;
-                std::string varname = line.substr(0,6);
-                if(varname == "FREQ4C"){
-                    std::string val = line.substr(7,3);
-                    c4_freq = (uint16_t) std::stoi(val);
-                } else if(varname == "VOLT4C"){
-                    std::string val = line.substr(7,3);
-                    c4_volt = (uint16_t) std::stoi(val);
-                } else if(varname == "FREQ2C"){
-                    std::string val = line.substr(7,3);
-                    c2_freq = (uint16_t) std::stoi(val);
-                } else if(varname == "VOLT2C"){
-                    std::string val = line.substr(7,3);
-                    c2_volt = (uint16_t) std::stoi(val);
-                }
+            else if(varname == "FREQ2C") {
+                std::string val = line.substr(7, 3);
+                c2_freq = (uint16_t) std::stoi(val);
+            }
+            else if(varname == "VOLT2C") {
+                std::string val = line.substr(7, 3);
+                c2_volt = (uint16_t) std::stoi(val);
             }
 
         }
-
-        // else we use the defaults
-
-        #else
-    // Windows: just use defaults for now
-    #endif
-
-}
-
-void DeviceManager::set_frequency(uint16_t freq){
-    // if(num_chips)
-    c4_freq = freq;
-    c2_freq = freq;
-}
-
-void DeviceManager::set_volt(uint16_t volt){
-    c4_volt = volt;
-    c2_volt = volt; 
+    }
+    else {
+        // set default values
+        c4_freq = 600;
+        c4_volt = 700;
+        c2_freq = 600;
+        c2_volt = 700;
+    }
 
 }
 
-void DeviceManager::set_power_mode(int device_id, int num_chips){
-
-    #ifdef __GNUC__
-    // ignore the fact this variable is unused, to satisfy -Werror
-    __attribute__((unused)) memx_status status;
-    #else
-    // else we're kind of stuck, lol
-    memx_status status;
-    #endif
-    
-    #ifdef __linux__
-        // SET THE STUFF
-        if(num_chips == 4){
-            status = memx_set_feature(device_id, 0, OPCODE_SET_FREQUENCY, c4_freq);
-            status = memx_set_feature(device_id, 1, OPCODE_SET_FREQUENCY, c4_freq);
-            status = memx_set_feature(device_id, 2, OPCODE_SET_FREQUENCY, c4_freq);
-            status = memx_set_feature(device_id, 3, OPCODE_SET_FREQUENCY, c4_freq);
-            status = memx_set_feature(device_id, 0, OPCODE_SET_VOLTAGE, c4_volt);
-        } else if(num_chips == 2){
-            status = memx_set_feature(device_id, 0, OPCODE_SET_FREQUENCY, c2_freq);
-            status = memx_set_feature(device_id, 1, OPCODE_SET_FREQUENCY, c2_freq);
-            status = memx_set_feature(device_id, 0, OPCODE_SET_VOLTAGE, c2_volt);
-        }
-    #else
-        //Not supported for windows currently
-    #endif
-}
-
-
-
-mx_retval_t DeviceManager::configure_device(int device_id, int device_chip_count, int pdfp_num_chips, float pmxa_gen){
+bool DeviceManager::set_power_mode(int device_id, int num_chips, MX::Types::MxFrequencyOption fop)
+{
 
     memx_status status = MEMX_STATUS_OK;
 
-    if(pmxa_gen == MEMX_DEVICE_CASCADE){
-        mx_retval_t lock_ret = device_unlock(device_id);
-        if(!lock_ret.error_flag) return lock_ret;
-        mx_retval_t chip_ret = throw_mxa_gen_exception(device_chip_count);
-        return chip_ret;
+    // check that the num_chips given is equal to the number of chips in the device,
+    // or the valid special case of a 4-chip device working with num_chips==2
+    if(device_id < 0 || device_id >= all_devices_count) {
+        throw std::runtime_error("Invalid device ID passed to DeviceManager::set_power_mode");
+        return false;
     }
-    else{
-        if(pdfp_num_chips>device_chip_count){
-            mx_retval_t lock_ret = device_unlock(device_id);
-            if(!lock_ret.error_flag) return lock_ret;
-            mx_retval_t chip_ret = throw_chip_exception(pdfp_num_chips, device_chip_count, device_id);
-            return chip_ret;
+    if(num_chips != device_infos[device_id].chip_count) {
+        if(device_infos[device_id].chip_count == 4 && num_chips == 2) {
+            // this is a special case, so we can ignore it
         }
-        //Change the MPU config based on DFP if needed
-        else if(pdfp_num_chips==8 && device_chip_count==8){
-            status = memx_config_mpu_group(device_id, MEMX_MPU_GROUP_CONFIG_ONE_GROUP_EIGHT_MPUS);
-            available_mxa_device_map.at(device_id).current_config = MEMX_MPU_GROUP_CONFIG_ONE_GROUP_EIGHT_MPUS;
-        }
-        else if(pdfp_num_chips==4){
-            status = memx_config_mpu_group(device_id, MEMX_MPU_GROUP_CONFIG_ONE_GROUP_FOUR_MPUS);
-            available_mxa_device_map.at(device_id).current_config = MEMX_MPU_GROUP_CONFIG_ONE_GROUP_FOUR_MPUS;
-        }
-        else if(pdfp_num_chips==2){
-            status = memx_config_mpu_group(device_id, MEMX_MPU_GROUP_CONFIG_TWO_GROUP_TWO_MPUS);
-            available_mxa_device_map.at(device_id).current_config = MEMX_MPU_GROUP_CONFIG_TWO_GROUP_TWO_MPUS;
-        }
-        else{
-            mx_retval_t lock_ret = device_unlock(device_id);
-            if(!lock_ret.error_flag) return lock_ret;
-            mx_retval_t chip_ret = throw_chip_exception(pdfp_num_chips, device_chip_count, device_id);
-            return chip_ret;
+        else {
+            throw std::runtime_error("Invalid number of chips passed to DeviceManager::set_power_mode");
+            return false;
         }
     }
 
-    mx_retval ret(true);
-    if(memx_status_error(status)){
-        ret.error_flag = false;
-        ret.error_msg = "Device config error";
-    }    
-    return ret; 
+    if(fop == MX::Types::MxFrequencyOption::FREQ_USE_CONF) {
+        if(num_chips == 2) {
+            status = memx_set_feature(device_id, 0, OPCODE_SET_FREQUENCY, c2_freq);
+            status = memx_set_feature(device_id, 1, OPCODE_SET_FREQUENCY, c2_freq);
+            status = memx_set_feature(device_id, 0, OPCODE_SET_VOLTAGE,   c2_volt);
+        }
+        else if(num_chips >= 4) {
+            // all num_chips >= 4 use the c4 values
+            for(int i = 0; i < num_chips; i++) {
+                status = memx_set_feature(device_id, i, OPCODE_SET_FREQUENCY, c4_freq);
+            }
+            status = memx_set_feature(device_id, 0, OPCODE_SET_VOLTAGE, c4_volt);
+        }
+        else {
+            throw std::runtime_error("Invalid number of chips passed to DeviceManager::set_power_mode");
+            return false;
+        }
+    }
+    else {
+        MX::Types::MxVoltageOption volt = MX::Types::getVoltageFromFrequency(fop);
+
+        // set all chips to the same frequency that's passed in fop
+        for(int i = 0; i < num_chips; i++) {
+            status = memx_set_feature(device_id, i, OPCODE_SET_FREQUENCY, fop);
+        }
+        status = memx_set_feature(device_id, 0, OPCODE_SET_VOLTAGE, volt);
+    }
+
+    return memx_status_no_error(status);
 }
 
-mx_retval_t DeviceManager::connect_device(int dfp_tag, int device_id){
 
-    mx_retval_t lock_ret = this->try_lock(device_id);
-    // Lock MXA device
-    if(!lock_ret.error_flag){
-        return lock_ret;
+bool DeviceManager::configure_groups(int device_id, int device_chip_count, int pdfp_num_chips)
+{
+
+    memx_status status = MEMX_STATUS_OK;
+
+    //Change the MPU config based on DFP if needed
+    if(pdfp_num_chips == 8 && device_chip_count == 8) {
+        status = memx_config_mpu_group(device_id, MEMX_MPU_GROUP_CONFIG_ONE_GROUP_EIGHT_MPUS);
     }
-    
-    // check chip count and see if dfp chip requires that much
-    uint8_t device_chip_count = this->available_mxa_device_map.at(device_id).chip_count;
-    int l_dfp_num_chips = this->dfp_mxa_map.at(dfp_tag).dfp_num_chips;
-    float l_mxa_gen = this->dfp_mxa_map.at(dfp_tag).mxa_gen;
-    bool l_use_mg_lb = this->dfp_mxa_map.at(dfp_tag).use_multigroup_lb;
-    mx_retval_t config_ret(true);
-    // if the dfp does not require a 8 chip MXA skip this device
-    if(device_chip_count > 4 && l_dfp_num_chips <=4 ){
-        mx_retval_t unlock_ret = device_unlock(device_id);
-        if(!unlock_ret.error_flag) return unlock_ret;
-        config_ret.error_flag= false;
-        // continue;
+    else if(pdfp_num_chips == 4) {
+        status = memx_config_mpu_group(device_id, MEMX_MPU_GROUP_CONFIG_ONE_GROUP_FOUR_MPUS);
     }
-    else{
-        //if device has the required number of chips configure the device and open necessary contexts    
-        config_ret = configure_device(device_id, device_chip_count, l_dfp_num_chips, l_mxa_gen);
-        if(l_dfp_num_chips == 4){
-            set_power_mode(device_id, 4);
-        } else if(l_dfp_num_chips == 2){
-            if(l_use_mg_lb){
-                set_power_mode(device_id, 4);
-            } else {
-                set_power_mode(device_id, 2);
-            }
-        }
-        open_devices.push_back(device_id);            
-        available_mxa_device_map.at(device_id).is_device_open = true;
-    }
-    return config_ret;
-}
-
-mx_retval_t DeviceManager::setup_mxa(int dfp_tag, std::vector<int>& pgroup_ids){
-
-    
-    required_devices = pgroup_ids.size();
-    
-    open_devices.clear();
-    dfp_mxa_map.at(dfp_tag).context_ids_vector.clear();
-    open_devices.reserve(required_devices);
-    isflashmodule_vec.clear();
-    isflashmodule_vec.reserve(required_devices); 
-    device_powers.clear();
-    device_powers.reserve(required_devices); 
-    device_max_temperatures.clear();
-    device_max_temperatures.reserve(required_devices); 
-
-    mx_retval_t config_ret(true);
-
-    config_ret = this->get_available_devices();
-    if(!config_ret.error_flag) return config_ret;
-
-    for(int d = 0 ; d < required_devices ; d++){
-        int device_id = pgroup_ids[d];
-        if(available_mxa_device_map.find(device_id)==available_mxa_device_map.end()){
-            return throw_device_not_available_exception(device_id);
-        }
-        available_mxa_device_map.at(device_id).contexts_ids_attached.clear();
-        available_mxa_device_map.at(device_id).number_of_contexts_attached = 0;
-
-        auto device_it = this->available_mxa_device_map.find(device_id);
-        if (device_it != available_mxa_device_map.end() && !device_it->second.is_device_open) {
-
-            config_ret = connect_device(dfp_tag, device_id);
-            if(!config_ret.error_flag){
-                return config_ret;
-            }
-        }
-        else{
-            return throw_device_not_available_exception(device_id);
-        }
-       
-    }
-
-    identify_flash_modules(); // fills out the bollean vector with if the device is mxmf or not
-    return config_ret;
-}
-
-mx_retval_t DeviceManager::attach_dfp_to_device(int dfp_tag){
-
-
-    // While attaching dfp to an already configured device - check configuration and decide number of contexts required for tat dfp
-    // this means that the dfps added later should have the same configuration as the initial dfp
-    // if a new config dfp is added then setup and config has to be called again
-
-    mx_retval_t attach_ret(true);
-
-    for(int d = 0 ; d < required_devices ; d++){
-        int device_id = open_devices[d];
-        int number_of_contexts = 0;
-        if(available_mxa_device_map.at(device_id).current_config == MEMX_MPU_GROUP_CONFIG_ONE_GROUP_FOUR_MPUS){
-            number_of_contexts = 1;            
-        }
-        else{
-            if(dfp_mxa_map.at(dfp_tag).use_multigroup_lb)
-                number_of_contexts = 2;
-            else
-                number_of_contexts = 1;
-        }
-
-        //reserving two contexts per device as maximum two contexts are possible. (ignoring model swaping)
-        int context_init = device_id*2;
-        for(int i = 0; i < number_of_contexts; i++){
-            // Context IDs are limited based on driver limitation (0 to 31) across all the devices
-            // hence the context_id_tracker that keeps running count on all IDs
-            // get the recent context_id to assign for a dfp
-            
-            if(context_init >= 32){
-                attach_ret.error_flag = false;
-                attach_ret.error_flag = "cannot open more than 32 contexts";
-                return attach_ret;
-            }
-
-            memx_status status = memx_open(context_init, device_id, MEMX_DEVICE_CASCADE_PLUS);
-            if (memx_status_error(status)){
-                attach_ret.error_flag = false;
-                attach_ret.error_flag = "Couldn't open a context with a device, please verify the MXA connection";
-                return attach_ret;
-            }
-            else{
-                dfp_mxa_map.at(dfp_tag).context_ids_vector.push_back(context_init);
-                available_mxa_device_map.at(device_id).contexts_ids_attached.push_back(context_init);
-                available_mxa_device_map.at(device_id).number_of_contexts_attached++;
-                context_init++;
-            }
-        }
-
-        int mpu_group_count = 0;
-        memx_status status = memx_operation_get_mpu_group_count(device_id, &mpu_group_count);
-        if (memx_status_error(status))
-        {
-            attach_ret.error_flag = false;
-            attach_ret.error_flag = "Couldn't get the mpu group count";
-            return attach_ret;
-        }
-    }
-    return attach_ret;
-}
-
-mx_retval_t DeviceManager::download_dfp_to_device(int dfp_tag){
-
-    mx_retval_t download_ret(true);
-    // Since download of dfp has to happen a lot of times this function has been separated and can be called.
-    // will download to all the contexts that has been assigned to that dfp and will enable the stream for that context
-    int dfp_num_contexts = dfp_mxa_map.at(dfp_tag).context_ids_vector.size();
-    for(int i = 0; i < dfp_num_contexts; i++){
-        int ctx = dfp_mxa_map.at(dfp_tag).context_ids_vector[i];
-
-        memx_status status;
-        if(dfp_mxa_map.at(dfp_tag).is_bytes){
-            status = memx_download_model(ctx,  (const char*) dfp_mxa_map.at(dfp_tag).dfp->src_dfp_bytes, 0 /*model_idx? */, MEMX_DOWNLOAD_TYPE_WTMEM_AND_MODEL_BUFFER);
+    else if(pdfp_num_chips == 2) {
+        if (device_chip_count == 2) {
+            status = memx_config_mpu_group(device_id, MEMX_MPU_GROUP_CONFIG_ONE_GROUP_TWO_MPUS);
         } else {
-            status = memx_download_model(ctx,  dfp_mxa_map.at(dfp_tag).dfp->path().c_str(), 0 /*model_idx? */, MEMX_DOWNLOAD_TYPE_WTMEM_AND_MODEL);
-        }
-        if (memx_status_error(status))
-        {
-            std::ostringstream oss;
-            oss<< "Download of DFP "<<  dfp_mxa_map.at(dfp_tag).dfp->path() <<" failed";
-            download_ret.error_flag = false;
-            download_ret.error_msg = oss.str();
-            return download_ret;
-        }
-
-        // start stream
-        status = memx_set_stream_enable(ctx, 0 /*wait time?*/);
-        if (memx_status_error(status))
-        {
-            download_ret.error_flag = false;
-            download_ret.error_msg = "Enable stream failed";
-            return download_ret;
+            status = memx_config_mpu_group(device_id, MEMX_MPU_GROUP_CONFIG_TWO_GROUP_TWO_MPUS);
         }
     }
-    return download_ret;
+    else {
+        // invalid combination
+        spdlog::error("[DeviceMgr] Invalid DFP chip count {} for device {} with chip count {}", pdfp_num_chips, device_id,
+                      device_chip_count);
+        return false;
+    }
+
+    return memx_status_no_error(status);
 }
 
-void DeviceManager::cleanup_dfp(int dfp_tag){
-    auto it = this->dfp_mxa_map[dfp_tag];
-    it.context_ids_vector.clear();
 
-    if(it.dfp!=NULL){
-        delete it.dfp;
-        it.dfp = NULL;
+float DeviceManager::get_power(int device_id)
+{
+
+    if(device_id < 0 || device_id >= all_devices_count) {
+        std::cerr << "Invalid device ID given to DeviceManager::get_power: " << device_id << std::endl;
+        return -1.0f;
     }
-    else{
-        it.dfp = NULL;
+
+    if(device_infos[device_id].can_get_power_data) {
+        uint64_t power = 0;
+        memx_get_feature(device_id, 0, OPCODE_GET_POWER, &power);
+        return (float) power;
     }
-    it.valid = false;    
+    else {
+        std::cerr << "Connected device does not support power measurement\n";
+        return -1.0f;
+    }
 }
 
-void DeviceManager::cleanup__all_dfps(){
-    for(auto& it  : this->dfp_mxa_map ){
-        cleanup_dfp(it.first);
-    }
-    this->dfp_mxa_map.clear();
-}
 
-mx_retval_t DeviceManager::device_unlock(int device_id){
-    mx_retval_t unlock_ret(true);
-  #ifndef DISABLE_DAEMON
-    if(stub_!=NULL){
-        grpc::ClientContext ctx;
-        Ping reply;
-        LockData lck_data;
-        lck_data.set_group_id(device_id);
-        mxstream::MxService::Stub* local_stub = (mxstream::MxService::Stub*)stub_;
-        grpc::Status status = local_stub->unlock(&ctx,lck_data,&reply);
-        if(!status.ok()){
-            unlock_ret.error_flag = false;
-            unlock_ret.error_msg = "grpc unlock connection failed";
-            return unlock_ret;
-        }
-        unlock_ret.error_flag = reply.recv();
-        if(!unlock_ret.error_flag) unlock_ret.error_msg = "Daemon unlock failed on device: "+std::to_string(device_id);
-        return unlock_ret;
-    }
-  #endif
-    if(server_mode_){
-        unlock_ret.error_flag = true;
-    } else {
-        memx_status status = memx_unlock(device_id);
-        unlock_ret.error_flag = memx_status_no_error(status);
-        if(!unlock_ret.error_flag) unlock_ret.error_msg = "Unlock failed on device: "+std::to_string(device_id);
-    }
-    return unlock_ret;
-}
+float DeviceManager::get_max_temperature(int device_id)
+{
 
-mx_retval_t DeviceManager::close_device(int device_id){
+    if(device_id < 0 || device_id >= all_devices_count) {
+        std::cerr << "Invalid device ID given to DeviceManager::get_max_temperature: " << device_id << std::endl;
+        return -1.0f;
+    }
 
-    mx_retval_t close_ret(true);
-    int num_contexts = available_mxa_device_map.at(device_id).number_of_contexts_attached;
-    for(int ctx = 0; ctx < num_contexts ; ctx++){
-        memx_status status;
-        status = memx_close(available_mxa_device_map.at(device_id).contexts_ids_attached[ctx]);
-        if (memx_status_error(status))
-        {
-            close_ret.error_flag = false;
-            close_ret.error_msg = "MXA context close failed";
-            return close_ret;
+    float device_max_temp = -999.9f;
+    for (uint8_t chip_num = 0; chip_num < device_infos[device_id].chip_count; chip_num++) {
+        uint64_t temperature = 0;
+        memx_get_feature(device_id, chip_num, OPCODE_GET_TEMPERATURE, &temperature);
+        temperature -= 273;
+        if(device_max_temp < (float) temperature) {
+            device_max_temp = (float) temperature;
         }
     }
-    available_mxa_device_map.at(device_id).number_of_contexts_attached = 0;
-    available_mxa_device_map.at(device_id).is_device_open = false;
-    available_mxa_device_map.at(device_id).contexts_ids_attached.clear();
 
-    close_ret = device_unlock(device_id);
-    return close_ret;
+    return device_max_temp;
 }
 
-mx_retval_t DeviceManager::close_all_devices(){
 
-    mx_retval_t close_ret(true);
-    if(!open_devices.empty()){
-        for (int i =0; i<static_cast<int>(open_devices.size()); i++){
-            close_ret = close_device(open_devices[i]);
-            if(!close_ret.error_flag) return close_ret;
-        }
-        open_devices.clear();
-        available_devices_id.clear();
-        available_mxa_device_map.clear();
+std::vector<float> DeviceManager::get_chip_temperatures(int device_id)
+{
+
+    if(device_id < 0 || device_id >= all_devices_count) {
+        std::cerr << "Invalid device ID given to DeviceManager::get_chip_temperatures: " << device_id << std::endl;
+        return {};
     }
-    return close_ret;
-}
 
-mx_retval_t DeviceManager::init_mx_models(int dfp_tag, std::vector<ModelBase *>* mxmodel_vector ){
-
-    mx_retval_t model_ret(true);
-    int num_models = dfp_mxa_map.at(dfp_tag).num_models;
-    for (int i = 0; i < num_models; ++i)
-    {
-
-        vector<uint8_t> in_ports = dfp_mxa_map.at(dfp_tag).dfp_meta.model_inports[i];
-        uint8_t format = dfp_mxa_map.at(dfp_tag).dfp->input_port(in_ports[0])->format;
-        
-        if(format == MX_FMT_RGB888){
-            model_ret.error_flag = false;
-            model_ret.error_msg = "int inputs are currently not supported";      
-            return model_ret;         
-        }
-        else{
-            MxModel<float> *fm = new MxModel<float>(i, dfp_mxa_map.at(dfp_tag).dfp, &dfp_mxa_map.at(dfp_tag).context_ids_vector);
-            mxmodel_vector->push_back(fm);
-        }
+    std::vector<float> chip_temperatures(device_infos[device_id].chip_count);
+    for (uint8_t chip_num = 0; chip_num < device_infos[device_id].chip_count; chip_num++) {
+        uint64_t temperature = 0;
+        memx_get_feature(device_id, chip_num, OPCODE_GET_TEMPERATURE, &temperature);
+        chip_temperatures[chip_num] = (float) (temperature - 273);
     }
-    return model_ret;
-}
 
-int DeviceManager::get_dfp_num_chips(int dfp_tag){
-    return dfp_mxa_map.at(dfp_tag).dfp_num_chips;
-}
-
-int DeviceManager::get_dfp_num_models(int dfp_tag){
-    return dfp_mxa_map.at(dfp_tag).num_models;
-}
-
-bool DeviceManager::get_dfp_validity(int dfp_tag){
-    return dfp_mxa_map.at(dfp_tag).valid;
-}
-
-int DeviceManager::get_num_outports(int dfp_tag){
-    return dfp_mxa_map.at(dfp_tag).dfp_meta.num_outports;
-}
-
-void DeviceManager::identify_flash_modules() {
-
-  #ifdef __linux__
-    // MXM2 is only supported on Linux for now!
-    for(int i = 0;  i < (int)open_devices.size(); i++){
-        int d_id = open_devices[i];
-        std::string filepath = "/sys/memx" + std::to_string(d_id)+"/verinfo";
-        std::ifstream file(filepath);
-        if (!file.is_open()) {
-            std::cerr << "Error: Unable to open file " << filepath << std::endl;
-            // return false;
-            isflashmodule_vec[i] = false;
-            continue;
-        }
-
-        std::string line;
-        while (std::getline(file, line)) {
-            size_t pos = line.find("BootMode=");
-            if (pos != std::string::npos) {
-                std::string bootMode = line.substr(pos + 9); // Extract value after "BootMode="
-                if(bootMode.find("QSPI") != std::string::npos){ // finding QSPI and if available (npos is no position)
-                    isflashmodule_vec.push_back( true);
-                }
-                else{ // if PCIE
-                    uint64_t power =0 ;
-                    memx_status status = memx_get_feature(d_id, 0, OPCODE_GET_POWER, &power);
-                    if(memx_status_no_error(status))
-                        isflashmodule_vec.push_back(false);
-                    else 
-                        isflashmodule_vec.push_back(true);
-                }
-            }
-        }
-        device_powers.push_back(0.0);
-        device_max_temperatures.push_back(-999.9f);
-        chip_temperatures.emplace_back(4, 0.0f);
-    }
-  #else
-    // don't support on Windows yet!
-    for(int i = 0;  i < (int)open_devices.size(); i++){
-        isflashmodule_vec[i] = false;
-    }
-  #endif
-
-    // If any of the connected modules is / are MXM-F we do not return power data : All the modules should be MXM-2 to get average power
-    // returns `true` if all the values in isflashmodule_vec is `false` else returns `false`
-    this->can_return_power_data = !std::any_of(isflashmodule_vec.begin(), isflashmodule_vec.end(), [](bool val) { return val; });
-}
-
-bool DeviceManager::power_data_possible_or_no(){
-    return can_return_power_data;
-}
-
-
-const std::vector<float>& DeviceManager::get_power_all_open_devices(){
-
-    for(size_t i = 0 ; i<open_devices.size() ; i++){
-
-        int device_id = open_devices[i];
-        if(!isflashmodule_vec[i]){
-            uint64_t power=0;
-            memx_get_feature(device_id, 0, OPCODE_GET_POWER, &power);
-            device_powers[i] = (float) power;
-        }else{
-            std::cerr<<"MXM - F connected cannot get power value \n";
-            device_powers[i] = -1.0f;
-        }
-    }
-    return device_powers;
-}
-
-const std::vector<float>& DeviceManager::get_max_temperature_all_open_devices(){
-
-    for(size_t i = 0 ; i<open_devices.size() ; i++){
-        int device_id = open_devices[i];
-        float device_max_temp = -999.9f;
-        for (uint8_t chip_num = 0; chip_num < 4; chip_num++) {
-                uint64_t temperature=0;
-                memx_get_feature(device_id, chip_num, OPCODE_GET_TEMPERATURE, &temperature);
-                temperature -= 17;
-                if(device_max_temp < (float) temperature){
-                    device_max_temp = (float) temperature;
-                }
-            }
-            device_max_temperatures[i] = device_max_temp;
-    }
-    return device_max_temperatures;
-}
-
-const std::vector<std::vector<uint64_t>>& DeviceManager::get_chip_temperature_all_open_devices(){
-
-    for(size_t i = 0 ; i<open_devices.size() ; i++){
-
-        int device_id = open_devices[i];
-        for (uint8_t chip_num = 0; chip_num < 4; chip_num++) {
-                uint64_t temperature=0;
-                memx_get_feature(device_id, chip_num, OPCODE_GET_TEMPERATURE, &temperature);                
-                chip_temperatures[i][chip_num] = (temperature-17);
-            }
-    }
     return chip_temperatures;
 }

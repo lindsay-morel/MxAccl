@@ -1,12 +1,25 @@
-#ifndef MX_ACCL
-#define MX_ACCL
+// Copyright (c) 2025 MemryX
+// SPDX-License-Identifier: MPL-2.0
+//
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+#ifndef MX_ACCL_H
+#define MX_ACCL_H
+
+#pragma once
 #include <string>
 #include <stdint.h>
 #include <atomic>
 #include <thread>
+#include <map>
+#include <unordered_map>
+#include <mutex>
+#include <utility>
 
 #include <memx/accl/MxModel.h>
+#include <memx/accl/MxAcclBase.h>
 #include <memx/accl/dfp.h>
 #include <memx/accl/utils/general.h>
 #include <memx/accl/utils/featureMap.h>
@@ -15,284 +28,275 @@
 #include <memx/accl/utils/mxTypes.h>
 
 using namespace std;
-struct daemon_items;
 
 namespace MX
 {
-  namespace Runtime
-  {
-    class MxAccl
-    {
-    private:
-      typedef std::function<bool(vector<const MX::Types::FeatureMap<uint8_t> *>, int stream_id)> int_callback_t;
-      typedef std::function<bool(vector<const MX::Types::FeatureMap<float> *>, int stream_id)> float_callback_t;
-    public:
+namespace Runtime
+{
+class MxAccl : public MxAcclBase
+{
+  private:
 
-      /**
-       * @brief MxAccl constructor
-       *
-       * @param use_shared_mode This flag is 'false' by default, giving the MxAccl object direct control of the MXA. When set to 'true', MxAccl can be used in Shared mode which enables multiple processes on local (or remote) machines to share the MXA, with some potential performance penalty.
-       * @param server_ip Server IP to connect to represented as string. Default IP address is 127.0.0.1, which is localhost.
-       * @param server_port_base Starting port number as unsigned int, default is 10000. The server will use this port, **and** port+1 and port+2. For example, 10000, 10001, 10002.
-       */
-      MEMX_API_EXPORT MxAccl(bool use_shared_mode = false, std::string server_ip = "127.0.0.1", unsigned int server_port_base = 10000);
+    /**
+     * @brief Type definition for a callback function that processes input and output feature maps.
+     *
+     * This callback is used to handle both input and output. For input callbacks, you should
+     * write your input data (a 1D float array (float*)) to the provided feature map objects with
+     * the `set_data()` method.
+     *
+     * For output callbacks, the feature maps will contain the results of the model execution, which
+     * you should read into a 1D float array (float*) with `get_data()`.
+     *
+     * The `stream_id` parameter allows you to distinguish between different streams, which is useful
+     * when multiple streams are connected to the same model. The stream ID is passed to your function
+     * from the runtime's internal scheduler, and it is the same ID you provided when calling `connect_stream()`.
+     */
+    typedef std::function<bool(vector<const MX::Types::FeatureMap*>, int stream_id)> float_callback_t;
 
-      /**
-       * @brief Connect a dfp to MxAccl object. Currently only one connect_dfp per MxAccl object is allowed.
-       *
-       * @param file_path Absolute path of DFP file. char* and String types can also be passed.
-       * @param device_ids_to_use IDs of MXA devices this process intends to use. takes in a vector of IDs and will return an error if an empty vector is passed
-       *
-       * @return dfp_id which is later to be passed in connect_stream function to specify that specific stream to a dfp
-       */
-      MEMX_API_EXPORT int connect_dfp(const std::filesystem::path dfp_path,std::vector<int>& device_ids_to_use);
+  public:
 
-      /**
-       * @brief Connect a dfp to MxAccl object. Currently only one connect_dfp per MxAccl object is allowed.
-       *
-       * @param file_path Absolute path of DFP file. char* and String types can also be passed.
-       * @param group_id GroupId of MPU this application is intended to use.
-       * group_id is defaulted to 0, but needs to be provided if using
-       * any other group
-       *
-       * @return dfp_id which is later to be passed in connect_stream function to specify that specific stream to a dfp
-       */
-      MEMX_API_EXPORT int connect_dfp(const std::filesystem::path dfp_path,int group_id = 0);
+    /**
+    * @brief All-in-one constructor that initializes the MxAccl object, loads the provided DFP, 
+    *        and applies runtime configuration options.
+    *
+    * This constructor streamlines the setup of a MemryX accelerator instance by combining DFP 
+    * loading, device selection, scheduler setup, and client/server configuration into a single step.
+    *
+    * @param dfp_path 
+    * Path to the compiled DFP (Dataflow Program) file. Accepts `std::filesystem::path`, `const char*`, or `std::string`.
+    *
+    * @param device_ids_to_use 
+    * List of MXA device IDs to use for execution. Specify `{-1}` to indicate that all available devices should be used.
+    * Default is `{0}`.
+    *
+    * @param use_model_shape 
+    * A pair of boolean flags `{input, output}` indicating whether to preserve the original model input/output shapes (`true`),
+    * or to use the shape as interpreted by the MXA runtime (`false`). Default is `{true, true}`.
+    *
+    * @param local_mode 
+    * If set to `true`, the DFP runs in local (non-shared) mode. This mode may improve performance for single-process
+    * applications but does not support multi-process or multi-DFP usage. Default is `false`.
+    *
+    * @param sched_options 
+    * Runtime scheduler configuration used when operating in shared mode. Includes frame limits, timeouts,
+    * and queue sizes. Default is `{frame_limit = 600, timeout = 0, swap_on_empty = false, input_queue_size = 16, output_queue_size = 12}`.
+    * See @ref MX::RPC::SchedulerOptions for detailed field descriptions.
+    *
+    * @param client_options 
+    * Client-specific execution options such as FPS smoothing and target frame rate.
+    * Default is `{smoothing = false, fps_target = 0}`.
+    * See @ref MX::RPC::ClientOptions for detailed field descriptions.
+    *
+    * @param server_addr 
+    * Server address or UNIX socket file path for manager communication. 
+    * On Linux, the default is `"/run/mxa_manager/"` (UNIX socket). On Windows or remote setups, use an IP address (e.g., `"localhost"`).
+    *
+    * @param server_port_base 
+    * Base port number used for socket or IP-based communication. Applies to both socket filenames and IP addresses.
+    * Default is `10000`.
+    *
+    * @param ignore_server_ 
+    * (Advanced) If set to `true`, the MxAccl instance will ignore the manager server and operate in local mode only.
+    * @warning 
+    * Setting `ignore_server_` to `true` disables coordination with other processes and may result in device conflicts 
+    * if multiple clients or containers access the same device concurrently. Use with caution.
+    */
+    MEMX_API_EXPORT MxAccl(const std::filesystem::path& dfp_path,
+           std::vector<int> device_ids_to_use = {0},
+           std::array<bool, 2> use_model_shape = {true, true},
+           bool local_mode = false,
+           SchedulerOptions sched_options = {600, 0, false, 16, 12},
+           ClientOptions client_options = {false, 0},
+           std::string server_addr = "/run/mxa_manager/",
+           unsigned int server_port_base = 10000,
+           bool ignore_server_ = false) : MxAcclBase(dfp_path, device_ids_to_use,
+               use_model_shape, local_mode, sched_options, client_options, server_addr,
+               server_port_base, ignore_server_) {}
 
-      /**
-       * @brief Connect a dfp as bytes to MxAccl object. Currently only one connect_dfp per MxAccl object is allowed.
-       *
-       * @param dfp_bytes Raw uint8_t* pointer to DFP data
-       * @param device_ids_to_use IDs of MXA devices this process intends to use. takes in a vector of IDs and will return an error if an empty vector is passed
-       *
-       * @return dfp_id which is later to be passed in connect_stream function to specify that specific stream to a dfp
-       */
-      MEMX_API_EXPORT int connect_dfp(const uint8_t *dfp_bytes, std::vector<int>& device_ids_to_use);
+    /**
+    * @brief All-in-one constructor that initializes the MxAccl object, loads the provided DFP, 
+    *        and applies runtime configuration options.
+    *
+    * This constructor streamlines the setup of a MemryX accelerator instance by combining DFP 
+    * loading, device selection, scheduler setup, and client/server configuration into a single step.
+    *
+    * @param dfp_bytes 
+    * Raw `uint8_t*` pointer to memory containing the already-loaded DFP file data.
+    *
+    * @param device_ids_to_use 
+    * List of MXA device IDs to use for execution. Specify `{-1}` to indicate that all available devices should be used.
+    * Default is `{0}`.
+    *
+    * @param use_model_shape 
+    * A pair of boolean flags `{input, output}` indicating whether to preserve the original model input/output shapes (`true`),
+    * or to use the shape as interpreted by the MXA runtime (`false`). Default is `{true, true}`.
+    *
+    * @param local_mode 
+    * If set to `true`, the DFP runs in local (non-shared) mode. This mode may improve performance for single-process
+    * applications but does not support multi-process or multi-DFP usage. Default is `false`.
+    *
+    * @param sched_options 
+    * Runtime scheduler configuration used when operating in shared mode. Includes frame limits, timeouts,
+    * and queue sizes. Default is `{frame_limit = 600, timeout = 0, swap_on_empty = false, input_queue_size = 16, output_queue_size = 12}`.
+    * See @ref MX::RPC::SchedulerOptions for detailed field descriptions.
+    *
+    * @param client_options 
+    * Client-specific execution options such as FPS smoothing and target frame rate.
+    * Default is `{smoothing = false, fps_target = 0}`.
+    * See @ref MX::RPC::ClientOptions for detailed field descriptions.
+    *
+    * @param server_addr 
+    * Server address or UNIX socket file path for manager communication. 
+    * On Linux, the default is `"/run/mxa_manager/"` (UNIX socket). On Windows or remote setups, use an IP address (e.g., `"localhost"`).
+    *
+    * @param server_port_base 
+    * Base port number used for socket or IP-based communication. Applies to both socket filenames and IP addresses.
+    * Default is `10000`.
+    *
+    * @param ignore_server_ 
+    * (Advanced) If set to `true`, the MxAccl instance will ignore the manager server and operate in local mode only.
+    * @warning 
+    * Setting `ignore_server_` to `true` disables coordination with other processes and may result in device conflicts 
+    * if multiple clients or containers access the same device concurrently. Use with caution.
+    */
+    MEMX_API_EXPORT MxAccl(uint8_t* dfp_bytes,
+           std::vector<int> device_ids_to_use = {0},
+           std::array<bool, 2> use_model_shape = {true, true},
+           bool local_mode = false,
+           SchedulerOptions sched_options = {600, 0, false, 16, 12},
+           ClientOptions client_options = {false, 0},
+           std::string server_addr = "/run/mxa_manager/",
+           unsigned int server_port_base = 10000,
+           bool ignore_server_ = false) : MxAcclBase(dfp_bytes, device_ids_to_use,
+               use_model_shape, local_mode, sched_options, client_options, server_addr,
+               server_port_base, ignore_server_) {}
+    
+    
+    // dtor
+    MEMX_API_EXPORT ~MxAccl();
 
-      /**
-       * @brief Connect a dfp as bytes to MxAccl object. Currently only one connect_dfp per MxAccl object is allowed.
-       *
-       * @param dfp_bytes Raw uint8_t* pointer to DFP data
-       * @param group_id GroupId of MPU this application is intended to use.
-       * group_id is defaulted to 0, but needs to be provided if using
-       * any other group
-       *
-       * @return dfp_id which is later to be passed in connect_stream function to specify that specific stream to a dfp
-       */
-      MEMX_API_EXPORT int connect_dfp(const uint8_t *dfp_bytes, int group_id = 0);
+    /**
+    * @brief Connects a stream to a model using the specified input and output callback functions.
+    *
+    * This method registers a data stream for the given model and binds it to both input and output
+    * callback functions. Streams are uniquely identified using `stream_id`. This function must be 
+    * called before `start()` or after `stop()`.
+    *
+    * - `float_callback_t` is a function pointer type with the following signature:
+    *   `bool foo(std::vector<const MX::Types::FeatureMap*>, int stream_id);`
+    *
+    * - If the input callback (`in_cb`) returns `false`, the corresponding stream is stopped. When
+    *   all registered streams have stopped, `wait()` is invoked automatically.
+    *
+    * @param in_cb 
+    * Input callback function that supplies data to the model. Must match `float_callback_t` signature.
+    *
+    * @param out_cb 
+    * Output callback function invoked with the model’s output feature maps. Must match `float_callback_t` signature.
+    *
+    * @param stream_id 
+    * Unique identifier for this stream. It is passed to the callback functions to distinguish streams.
+    *
+    * @param model_id 
+    * Index of the model to which this stream is connected. Default is `0`.
+    */
+    MEMX_API_EXPORT void connect_stream(float_callback_t in_cb, float_callback_t out_cb, int stream_id, int model_id = 0);
 
-      //Destructor
-      MEMX_API_EXPORT ~MxAccl();
+    /**
+    * @brief Starts execution for the specified model or models.
+    *
+    * This function initiates processing for the given model ID. All streams associated 
+    * with the model must be connected beforehand via `connect_stream()`. Use `-1` to 
+    * indicate that all available DFPs and models should be started.
+    *
+    * @pre connect_stream() must be called before this method.
+    *
+    * @param model_id 
+    * Index of the model to start. Use `-1` to start all models.
+    * Default is `-1`.
+    */
+    MEMX_API_EXPORT void start(int model_id = -1);
 
-      /**
-       * @brief Start running inference.
-       * All streams must be connected before calling this function
-       */
-      MEMX_API_EXPORT void start();
+    /**
+    * @brief Blocks until all streams for the specified model(s) have completed execution.
+    *
+    * This function waits until all active input callbacks for the given model have returned `false`,
+    * indicating the end of their respective streams. It should only be called after `start()` has 
+    * been invoked for the target model(s).
+    *
+    * Use `-1` to wait for all models and DFPs currently in execution.
+    *
+    * @param model_id 
+    * Index of the model to wait on. Use `-1` to wait on all active models.
+    * Default is `-1`.
+    */
+    MEMX_API_EXPORT void wait(int model_id = -1);
 
-      /**
-       * @brief Stop running inference.
-       * Shouldn't be called before calling start.
-       *
-       */
-      MEMX_API_EXPORT void stop();
-
-      /**
-       * @brief Wait for all the streams to be done streaming. This function waits
-       * till all the started input callbacks have returned false.
-       * Shouldn't be called before calling start.
-       *
-       */
-      MEMX_API_EXPORT void wait();
-
-      /**
-       * @brief Get number of models in the compiled DFP
-       *
-       * @return Number of models
-       */
-      MEMX_API_EXPORT int get_num_models();
-
-      /**
-       * @brief Get number the number of streams connected to the object
-       *
-       * @return Number of streams
-       */
-      MEMX_API_EXPORT int get_num_streams();
-
-      /**
-       * @brief Get number of chips the dfp is compiled for
-       *
-       * @return Number of chips
-       */
-      MEMX_API_EXPORT int get_dfp_num_chips();
-
-      /**
-       * @brief Connect a stream to a model
-       * - float_callback_t is a function pointer of type, bool foo(vector<const MX::Types::FeatureMap<float>*>, int).
-       * - When this input callback function returns false, the corresponding stream is stopped and when all the streams stop,
-       * wait() is executed.
-       * - connect_stream should be called before calling start() or after calling stop().
-       * @param in_cb -> input callback function used by this stream
-       * @param out_cb -> output callback function used by this stream
-       * @param stream_id -> Unique id given to this stream which can later
-       *              be used in the corresponding callback functions
-       * @param model_id -> Index of model this stream is intended to be connected
-       * @param dfp_id -> id of dfp returned by connect_dfp() function
-      */
-      MEMX_API_EXPORT void connect_stream(float_callback_t in_cb, float_callback_t out_cb, int stream_id, int model_id=0, int dfp_id = 0);
-      // /**
-      //  * @brief Connect a stream to a model
-      //  * - float_callback_t is a function pointer of type, bool foo(vector<const MX::Types::FeatureMap<float>*>, int).
-      //  * - int_callback_t is a function pointer of type, bool foo(vector<const MX::Types::FeatureMap<int>*>, int).
-      //  * - When this input callback function returns false, the corresponding stream is stopped and when all the streams stop,
-      //  * wait() is executed.
-      //  * - connect_stream should be called before calling start() or after calling stop().
-      //  * @param in_cb -> input callback function used by this stream
-      //  * @param out_cb -> output callback function used by this stream
-      //  * @param stream_id -> Unique id given to this stream which can later
-      //  *              be used in the corresponding callback functions
-      //  * @param model_id -> Index of model this stream is intended to be connected
-      // */
-      // void connect_stream(int_callback_t in_cb, float_callback_t out_cb, int stream_id, int model_id=0);
-
-      /**
-       * @brief get information of a particular model such as number of in out featureMaps and in out layer names
-       * @param model_id model ID or the index for the required information
-       * @return if valid model_id then MxModelInfo model_info with necessary information else throw runtime error invalid model_id
-      */
-      MEMX_API_EXPORT MX::Types::MxModelInfo get_model_info(int model_id) const;
-
-      /**
-       * @brief get information of the pre-processing model set to a particular model such as number of in out featureMaps and their sizes and shapes
-       * @param model_id model ID or the index for the required information
-       * @return if valid model_id then MxModelInfo model_info with necessary information else throw runtime error invalid model_id
-      */
-      MEMX_API_EXPORT MX::Types::MxModelInfo get_pre_model_info(int model_id) const;
-
-      /**
-       * @brief get information of the post-processing model set to a particular model such as number of in out featureMaps and their sizes and shapes s
-       * @param model_id model ID or the index for the required information
-       * @return if valid model_id then MxModelInfo model_info with necessary information else throw runtime error invalid model_id
-      */
-      MEMX_API_EXPORT MX::Types::MxModelInfo get_post_model_info(int model_id) const;
-
-      // User threading functions - No doxygen comments as we are releasing this for internal use
-      /**
-       * @brief Set the number of workers for input and output streams. The default is the number of streams
-       * for both number of input and output streams as that provides the maximum performance. If this method is
-       * not called before calling start(), the accl will run in default mode. This method should be called
-       * after connecting all the required streams.
-       *
-       * @param input_num_workers Number of input workers
-       * @param output_num_workers Number of output workers
-       * @param model_idx Index of model to which the workers are intended to be assigned to. The default is set to 0
-      */
-      MEMX_API_EXPORT void set_num_workers(int input_num_workers, int output_num_workers,int model_idx=0);
-
-      /**
-       * @brief Connect the information of the post-processing model that has been cropped by the neural compiler
-       *
-       * @param post_model_path  Abosulte path of the post-processing model. (Can be onnx/tflite etc)
-       * @param model_idx The index of model for which the post-processing is intended to be connected to.
-       * @param post_size_list If the output of the post-processing has a variable size or if the ouput sizes
-       * are not deduced, the maximum possible sizes of the output need to be passed. The default is an empty vector.
-      */
-      MEMX_API_EXPORT void connect_post_model(std::filesystem::path post_model_path, int model_idx=0, const std::vector<size_t>& post_size_list={});
-
-      /**
-       * @brief Connect the information of the pre-processing model that has been cropped by the neural compiler
-       *
-       * @param pre_model_path  Abosulte path of the pre-processing model. (Can be onnx/tflite etc)
-       * @param model_idx The index of model for which the post-processing is intended to be connected to.
-      */
-      MEMX_API_EXPORT void connect_pre_model(std::filesystem::path pre_model_path, int model_idx=0);
-
-      /**
-       * @brief Configure multi-threaded FeatureMap data conversion using the given number of threads.
-       * Conversion multithreading is mainly intended for high FPS single-stream scenarios, or userThreading mode.
-       * In multi-stream autoThreading scenarios, this option should not be necessary, and may even
-       * degrade performance due to increased CPU load.
-       *
-       * @param num_threads Number of worker threads for FeatureMaps. Use >= 2 to enable. Values < 2 disable.
-       * @param model_idx Index of model to enable the feature  The default is set to 0
-      */
-      MEMX_API_EXPORT void set_parallel_fmap_convert(int num_threads, int model_idx=0);
-
-      /**
-         * @brief Checks if power consumption data can be retrieved for the connected modules.
-         *
-         * @return true if power consumption data is available, false otherwise.
-       */
-      MEMX_API_EXPORT bool can_get_power_consumption();
-
-      /**
-         * @brief Retrieves the current power consumption of each connected device
-         *
-         * @return A reference to a vector containing the current power consumption values (in watts) for all devices.
-       */
-      MEMX_API_EXPORT const std::vector<float>& get_power_all_devices();
-
-      /**
-         * @brief Retrieves the current maximum temperature for all connected devices.
-         *
-         * @return A reference to a vector containing the max temperature values (in degrees Celsius) for all devices.
-       */
-      MEMX_API_EXPORT const std::vector<float>& get_max_temperature_all_devices();
-
-      /**
-         * @brief Retrieves temperatures of each chips across all open devices
-         *
-         * @return A reference to a vector<vector> containing the current temperature values (in degrees Celsius) for each chip for all devices.
-       */
-      MEMX_API_EXPORT const std::vector<std::vector<uint64_t>>& get_chip_temperatures_all_devices();
+    /**
+    * @brief Stops execution of the specified model or models.
+    *
+    * This function halts all active streams and processing associated with the given model.
+    * It should only be called after `start()` has been invoked. Use `-1` to stop all active 
+    * models and DFPs.
+    *
+    * @param model_id 
+    * Index of the model to stop. Use `-1` to stop all models.
+    * Default is `-1`.
+    */
+    MEMX_API_EXPORT void stop(int model_id = -1);
 
 
-      /**
-         * @brief Sets the operating frequency of the device.
-         *
-         * @note This function must be called before invoking `connect_dfp()`.
-         *       Calling it after `connect_dfp()` has will throw runtim error.
-         *
-         * @param freq_option The desired frequency option. Defaults to 600 MHz if not specified.
-         * @return true if the frequency was successfully set, false otherwise.
-       */
-      MEMX_API_EXPORT bool set_operating_frequency(MX::Types::MxFrequencyOption freq_option = MX::Types::MxFrequencyOption::FREQ_600MHz);
+    /**
+    * @brief Configures the number of worker threads for input and output streams for a given model.
+    *
+    * By default, the number of input and output workers is equal to the number of connected streams,
+    * which typically yields maximum performance. This method allows overriding that behavior to
+    * fine-tune parallelism.
+    *
+    * This method should be called **after** all required streams have been connected, and **before**
+    * `start()` is invoked. If not explicitly set, the accelerator will operate using default worker counts.
+    * @pre connect_stream() must be called before this method
+    *
+    * @param input_num_workers 
+    * Number of worker threads to assign for input processing.
+
+    * @param output_num_workers 
+    * Number of worker threads to assign for output processing.
+
+    * @param model_id 
+    * Index of the model to apply the worker configuration to. Default is `0`.
+    */
+    MEMX_API_EXPORT void set_num_workers(int input_num_workers, int output_num_workers, int model_id = 0);
+
+    /**
+    * @brief Returns the number of streams currently connected to the specified model.
+    *
+    * This method can be used to query how many streams have been registered for a given model
+    * using `connect_stream()`. It is useful for debugging, monitoring, or configuring worker allocation.
+    *
+    * @param model_id 
+    * Index of the model to query. Default is `0`.
+    *
+    * @return int 
+    * Number of streams connected to the specified model.
+    */
+    MEMX_API_EXPORT int get_num_streams(int model_id = 0);
 
 
-    private:
-      std::filesystem::path dfp_path;
-      std::vector<std::filesystem::path> dfp_paths;
-      bool dfp_valid;
-      bool setup_status;
+  private:
 
-      int group; //Group of the chip connected
+    void start_model(int dfp_id, int model_id);
+    void stop_model(int dfp_id, int model_id);
+    void wait_model(int dfp_id, int model_id);
+    void start_dfp(int dfp_id);
+    void stop_dfp(int dfp_id);
+    void wait_dfp(int dfp_id);
+    void start_all();
+    void stop_all();
+    void wait_all();
 
-      int dfp_tag;
-
-      std::atomic_bool run;//Flag to know status of the Accl
-
-      std::vector<ModelBase *> models;//Vector of all model objects
-
-      MX::Runtime::DeviceManager *device_manager;
-
-      std::unique_ptr<daemon_items> daemon_items_;
-      Dfp::DfpObject* dfp_=NULL;
-      void init_mx_models(std::vector<int>& device_ids_to_use);
-      int num_models_;
-      int num_chips_;
-      std::vector<int> device_ids_;
-      std::vector<int> context_ids_vector_;
-      char uuid_str[37];
-      std::vector<std::string> models_uuid;
-      std::thread* heartbeat_thread;
-      std::thread* local_heartbeat_thread;
-      void heartbeat_fun();
-      void local_heartbeat_fun();
-      std::atomic_bool heartbeat_run;
-      std::atomic_bool local_heartbeat_run;
-
-    };
-  } // namespace Runtime
+};
+} // namespace Runtime
 } // namespace MX
 
 #endif

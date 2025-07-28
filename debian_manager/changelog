@@ -1,3 +1,9 @@
+mxa-manager (2.0.0-6) testing; urgency=medium
+
+    * The Great SDK 2.0 Release -- test build
+
+ -- MemryX <no-reply@memryx.com>  Thu, 24 Jul 2025 00:00:00 -0500
+
 mxa-manager (1.2.1-3) stable; urgency=medium
 
     * avg temp reporting fixes

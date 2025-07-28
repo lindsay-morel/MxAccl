@@ -24,20 +24,14 @@ extern "C" {
  *  y: top level memx api changed,
  *  z: minor bug fix.
  */
-#define MEMX_LIBRARY_VERSION "2.8.0"
-
-/**
- * @brief SDK version tag, for understanding of which version to use together
- */
-#define MEMX_SDK_VERSION "1.2.0"
-
+#define MEMX_LIBRARY_VERSION "2.10.1"
 
 /***************************************************************************//**
  * common
  ******************************************************************************/
 #ifndef MEMX_COMMON_H_
 #define MEMX_COMMON_H_
-#if defined(__MSC_VER) || defined(WIN_EXPORTS) || defined(_MSC_VER)
+#if defined(__MSC_VER) || defined(WIN_EXPORTS)
   #define MEMX_API_EXPORT __declspec(dllexport)
   #define MEMX_API_IMPORT __declspec(dllimport)
 #elif defined(__GNUC__)
@@ -95,6 +89,9 @@ typedef enum _memx_get_feature_opcode {
   OPCODE_GET_POWERMANAGEMENT        = 13,
   OPCODE_GET_POWER_ALERT            = 14,
   OPCODE_GET_MODULE_INFORMATION     = 15,
+  OPCODE_GET_INTERFACE_INFO         = 16,
+  OPCODE_GET_IFMAP_CONTROL          = 17,
+  OPCODE_GET_HW_INFO                = 18,
   OPCODE_GET_FEATURE_MAX
 } memx_get_feature_opcode;
 
@@ -105,8 +102,15 @@ typedef enum _memx_set_feature_opcode {
   OPCODE_SET_POWERMANAGEMENT        = 3,
   OPCODE_SET_POWER_THRESHOLD        = 4,
   OPCODE_SET_POWER_ALERT_FREQUENCY  = 5,
+  OPCODE_SET_IFMAP_CONTROL          = 6,
   OPCODE_SET_FEATURE_MAX
 } memx_set_feature_opcode;
+
+typedef enum _memx_selftest_opcode {
+  OPCODE_SELFTEST_RESERVED          = 0,
+  OPCODE_SELFTEST_PCIE_BANDWIDTH    = 1,
+  OPCODE_SELFTEST_MAX
+} memx_selftest_opcode;
 
 typedef enum {
 	MEMX_PS0, 	//Operational power state (I/O Support)
@@ -214,33 +218,64 @@ typedef struct memx_fmap_buf_t {
 #define MEMX_FMAP_FORMAT_GBF80 (0)
 #define MEMX_FMAP_FORMAT_GBF80_ROW_PAD (6)
 
-#define MEMX_DOWNLOAD_TYPE_FROM_FILE   (0)
-#define MEMX_DOWNLOAD_TYPE_FROM_BUFFER (1 << 7)
+/**
+ * @brief Option of `memx_download_model()` to hint the data source type.
+ *        All Data source type could not be used togeter (exclusive)
+ */
+#define MEMX_DOWNLOAD_TYPE_FROM_CACHE               (1 << 5)
+#define MEMX_DOWNLOAD_TYPE_FROM_FILE                (0 << 7)
+#define MEMX_DOWNLOAD_TYPE_FROM_BUFFER              (1 << 7)
+
+/**
+ * @brief Option of `memx_download_model()` to hint using legacy way to download Weight Memory
+ */
+#define MEMX_DOWNLOAD_TYPE_WTMEM_LEGACY             (1 << 6)
 
 /**
  * @brief Option of `memx_download_model()` to download weight memory only to
  * device. Can be used together with `MEMX_DOWNLOAD_TYPE_MODEL`.
  */
-#define MEMX_DOWNLOAD_TYPE_WTMEM (1)
+#define MEMX_DOWNLOAD_TYPE_WTMEM (1 << 0)
 
 /**
  * @brief Option of `memx_download_model()` to download model only to device.
  * Can be used together with `MEMX_DOWNLOAD_TYPE_WTMEM`.
  */
-#define MEMX_DOWNLOAD_TYPE_MODEL (2)
+#define MEMX_DOWNLOAD_TYPE_MODEL (1 << 1)
 
 /**
  * @brief Option of `memx_download_model()` to download both weight memory and
  * model to device. The same effect as using `MEMX_DOWNLOAD_TYPE_WTMEM` and
  * `MEMX_DOWNLOAD_TYPE_MODEL` together.
  */
-#define MEMX_DOWNLOAD_TYPE_WTMEM_AND_MODEL (3)
+#define MEMX_DOWNLOAD_TYPE_WTMEM_AND_MODEL (MEMX_DOWNLOAD_TYPE_WTMEM | MEMX_DOWNLOAD_TYPE_MODEL)
+
+/**
+ * @brief Option of `memx_download_model()`.The same effect as using
+ * `MEMX_DOWNLOAD_TYPE_WTMEM_AND_MODEL`, but using Legacy way to download WTMEM.
+ */
+#define MEMX_DOWNLOAD_TYPE_WTMEM_AND_MODEL_LEGACY (MEMX_DOWNLOAD_TYPE_WTMEM_LEGACY | MEMX_DOWNLOAD_TYPE_WTMEM_AND_MODEL)
+
 
 /**
  * @brief Option of `memx_download_model()`.The same effect as using
  * `MEMX_DOWNLOAD_TYPE_WTMEM_AND_MODEL`, but using buffer pointer.
  */
 #define MEMX_DOWNLOAD_TYPE_WTMEM_AND_MODEL_BUFFER (MEMX_DOWNLOAD_TYPE_FROM_BUFFER | MEMX_DOWNLOAD_TYPE_WTMEM_AND_MODEL)
+
+/**
+ * @brief Option of `memx_download_model()`.The same effect as using
+ * `MEMX_DOWNLOAD_TYPE_WTMEM_AND_MODEL`, but using cache entry from upper layer.
+ */
+#define MEMX_DOWNLOAD_TYPE_WTMEM_AND_MODEL_CACHE (MEMX_DOWNLOAD_TYPE_FROM_CACHE | MEMX_DOWNLOAD_TYPE_WTMEM_AND_MODEL)
+
+
+/**
+ * @brief Option of `memx_download_model()`.The same effect as using
+ * `MEMX_DOWNLOAD_TYPE_WTMEM_AND_MODEL`, but using buffer pointer and Legacy way to download WTMEM.
+ */
+#define MEMX_DOWNLOAD_TYPE_WTMEM_AND_MODEL_BUFFER_LEGACY (MEMX_DOWNLOAD_TYPE_FROM_BUFFER | MEMX_DOWNLOAD_TYPE_WTMEM_LEGACY | MEMX_DOWNLOAD_TYPE_WTMEM_AND_MODEL)
+
 
 /**
  * @brief Option of `memx_config_mpu_group()` to set different MPU group
@@ -392,7 +427,7 @@ MEMX_API_EXPORT memx_status memx_operation(uint8_t model_id, uint32_t cmd_id, vo
  * and model to device.
  *
  * @param model_id            model ID
- * @param file_path           DFP file path
+ * @param file_path           DFP file path, only support from file
  *
  * @return 0 on success, otherwise error code
  */
@@ -406,7 +441,7 @@ MEMX_API_EXPORT memx_status memx_download_model_wtmem(uint8_t model_id, const ch
  * and model to device.
  *
  * @param model_id            model ID
- * @param file_path           DFP file path
+ * @param file_path           DFP file path, only support from file
  * @param model_idx           model index within DFP file, give '0' if there is only one model compiled in DFP file
  *
  * @return 0 on success, otherwise error code
@@ -844,6 +879,44 @@ MEMX_API_EXPORT memx_status memx_dequeue_ifmap_buf(uint8_t model_id, uint8_t flo
  */
 MEMX_API_EXPORT memx_status memx_dequeue_ofmap_buf(uint8_t model_id, uint8_t flow_id, memx_fmap_buf_t* fmap_buf, int32_t timeout);
 
+/**
+ * @brief Abort command for current connected MPU device group.
+ * This function must be used in 'unexpected termination situations' (e.g. ctrl-c event).
+ * memx_close must be called after this function to make sure dummy read will be triggered.
+ *
+ * @param model_id            model ID
+ *
+ * @return 0 on success, otherwise error code
+ */
+MEMX_API_EXPORT memx_status memx_set_abort_read(uint8_t model_id);
+
+/**
+ * @brief Device self-test for specific device and chip.
+ *
+ * @param group_id Group(device) id.
+ * @param chip_id  Chip id.
+ * @param opcode   Operation code for self-test
+ * @param buffer   User buffer pointer for self-test.
+ *
+ * @return 0 on success, otherwise error code
+ */
+MEMX_API_EXPORT memx_status memx_self_test(uint8_t group_id, uint8_t chip_id, memx_selftest_opcode opcode, void* buffer);
+
+/**
+ * @brief Download weight memory and model to device based on given DFP Cache Entry
+ * After model download is completed,  input and output feature map shape will be configured to
+ * driver to allocate resources automatically. After model download and before
+ * data can be transferred to device, `memx_set_stream_enable()` must be called
+ * to change driver internal state from idle to data-transfer.
+ *
+ * @param model_id            model ID
+ * @param pContext            DFP cahce entry pointer from upper layer
+ * @param model_idx           model index within DFP file only support 0
+ * @param type                0: ignored, 1: weight memory only, 2: model only, 3: both weight memory and model
+ *
+ * @return 0 on success, otherwise error code
+ */
+MEMX_API_EXPORT memx_status memx_download_model_from_cahce(uint8_t model_id, void *pContext, uint8_t model_idx, int type);
 #ifdef __cplusplus
 }
 #endif

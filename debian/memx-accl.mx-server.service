@@ -1,9 +1,0 @@
-[Unit]
-Description=The MemryX MX3 device management daemon.
-
-[Service]
-ExecStart=/usr/bin/mx_server
-User=daemon
-
-[Install]
-WantedBy=multi-user.target

@@ -11,7 +11,7 @@
 
 
 # MemryX Accl
-The MxAccl repository provides the **open-source code** for both the `mx_accl` runtime library and the `acclBench` benchmarking tool. These components enable seamless integration and performance measurement of C++ applications using the MemryX MX3 accelerator.
+The MxAccl repository provides the **open-source code** for both the `mx_accl` runtime library, `mxa-manager` daemon, and the `acclBench` benchmarking tool. These components enable seamless integration and performance measurement of C++ applications using the MemryX MX3 accelerator.
 
 ### MxAccl Library
 The `mx_accl` library is designed to efficiently handle multi-model and multi-input streams. It offers:
@@ -38,9 +38,9 @@ This repository contains the source code for the core `mx_accl` library and asso
 | Folder                               | Description                                                                                                                  |
 | -------------------------------------| ---------------------------------------------------------------------------------------------------------------------        |
 | `mx_accl`                            | Core MxAccl runtime library code
-| `mx_accl/tests`                      | Unit tests for MxAccl
-| `mx_server`                          | MXA-Manager daemon and config files
+| `mxa_manager`                        | MXA-Manager daemon and config files
 | `tools`                              | Utilities like acclBench
+| `misc`                               | Copies of the binary `libmemx.so` library, used for building Yocto packages separately
 
 > **IMPORTANT**: For most users, we highly recommend using the prebuilt `memx-accl` package provided by the  [MemryX SDK](https://developer.memryx.com), as it simplifies development and ensures all dependencies are properly managed.
 
@@ -50,9 +50,15 @@ To simplify development and avoid building from source, install the `memx-accl` 
 
 The **[MemryX Developer Hub](https://developer.memryx.com)** provides comprehensive documentation, tutorials, and examples to get you started quickly.
 
+The **[Runtime section](https://developer.memryx.com/runtime/index.html)** of the DevHub also has deeper details about this MxAccl library.
+
 ## Advanced Installation: Building from Source
 
 For advanced users who prefer to build the MxAccl library from source, follow these instructions:
+
+### Step 0: Install memx-drivers
+
+If you haven't already, install the MemryX drivers and runtime libraries by following the instructions in the [MemryX SDK Installation Guide](https://developer.memryx.com/get_started/install_software.html).
 
 ### Step 1: Clone the repository
 
@@ -60,69 +66,14 @@ For advanced users who prefer to build the MxAccl library from source, follow th
 git clone https://github.com/memryx/MxAccl.git
 ```
 
-### Step 2: Build gRPC (only required if using mxa-manager)
+### Step 2: Build MxAccl
 
-*Outside* your MxAccl folder, we need to build a static library version of gRPC.
+```bash
+mkdir build && cd build
 
-``` bash
-# clone and make build dirs
-git clone --recurse-submodules -b v1.68.2 --depth 1 --shallow-submodules https://github.com/grpc/grpc
-cd grpc
-mkdir cmake/build
-cd cmake/build
-
-# configure gRPC and set it to install to $HOME/grpc_inst
-cmake -DgRPC_INSTALL=ON -DgRPC_BUILD_TESTS=OFF -DgRPC_BUILD_GRPC_CSHARP_PLUGIN=OFF \
-  -DgRPC_BUILD_GRPC_NODE_PLUGIN=OFF -DgRPC_BUILD_GRPC_OBJECTIVE_C_PLUGIN=OFF \
-  -DgRPC_BUILD_GRPC_PHP_PLUGIN=OFF -DgRPC_BUILD_GRPC_RUBY_PLUGIN=OFF -DgRPC_BUILD_GRPC_PYTHON_PLUGIN=OFF \
-  -DCMAKE_INSTALL_PREFIX=$HOME/grpc_inst \
-  -DCMAKE_BUILD_TYPE=Release ../..
-
-# build (will take a while)
+cmake ..
 make -j$(nproc)
-
-# install to $HOME/grpc_inst
-make install
-
 ```
-
-### Step 3: Build MxAccl
-
-If you plan on using [Shared mode](https://developer.memryx.com/tutorials/mxa_manager/daemon_use.html), you will have to build gRPC above and then use Step 3a to build MxAccl.
-
-If you're definitely only going to use one application at a time in [Local mode](https://developer.memryx.com/tutorials/mxa_manager/daemon_use.html#local-mode-single-process-default), such as on Yocto systems, you can skip the dependency on mxa-manager (and thus gRPC) entirely with Step 3b.
-
-
-**Hint**: if you don't care about running unit tests, use the `-DBUILD_TYPE=Packaging` argument!
-
-
-#### Step 3a: with mxa-manager & gRPC support
-
-```bash
-mkdir build && cd build
-
-# must include the path to grpc_inst here
-PATH="$HOME/grpc_inst:$PATH" cmake [-DBUILD_TYPE=[Debug | Release | Packaging]] ..
-make -j
-```
-
-
-#### Step 3b: *without* mxa-manager / gRPC support
-
-```bash
-mkdir build && cd build
-
-cmake -DDISABLE_DAEMON=1 [-DBUILD_TYPE=[Debug | Release | Packaging]] ..
-make -j
-```
-
-
-### Additional Dependencies for Development
-
-* Gtest: Required for running the unit test suite. You can find it [here](https://github.com/google/googletest).
-
-* Test Models: Download the DFPs and source models for the unit tests from this [link](https://developer.memryx.com/example_files/mxaccl_tests_models.tar.xz) and extract them into the mx_accl/tests/models/ folder.
-
 
 ## Usage
 
@@ -130,25 +81,8 @@ make -j
 The typical use of `MxAccl` is to integrate it directly into your C++ application to manage model inference on the MemryX MX3 accelerator. For complete documentation and detailed integration tutorials, visit the [MxAccl Documentation](https://developer.memryx.com/api/accelerator/accelerator.html) and [Tutorials Page](https://developer.memryx.com/tutorials/tutorials.html).
 
 #### mxa_manager
-Starting with the 1.1 release, the `mxa_manager` process is used, even if you're not using Shared mode, for the daemon to manage locks/access to connected MX3 devices.
 
-**But**, if you compile with `-DDISABLE_DAEMON=1` like in Step 3b above, it can be bypassed by your applications. This is not recommended unless you have no alternative way to build gRPC for your platform.
-
-
-So before starting any tests or example apps, run the `mxa_manager` command in a separate terminal and leave it going.
-
-``` bash
-./mx_server/mxa_manager
-```
-
-
-Now to verify your setup, you can run the unit tests with the following command:
-
-```bash
-cd build
-ctest
-```
-
+The `mxa_manager` daemon is responsible for managing the MX3 accelerator and its resources. See its [documentation here](https://developer.memryx.com/runtime/usage/shared_local.html).
 
 ### acclBench
 
@@ -180,7 +114,7 @@ acclBench -d mobilenet.dfp -f 1000
 For Onnx, Tensorflow, and TFLite pre/post plugins, refer to the [MxUtils](https://github.com/memryx/MxUtils) repository. These plugins are packaged separately to minimize dependencies for the core MxAccl library and are only required if pre/post models are used.
 
 ## License
-MxAccl is open-source software under the permissive [MIT](LICENSE.md) license.
+MxAccl is free and open-source software under the [MPL-2.0 License](LICENSE-MPL-2.0).
 
 
 ## See Also

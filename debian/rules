@@ -9,8 +9,8 @@ include /usr/share/dpkg/architecture.mk
 	dh $@
 
 override_dh_install:
-	dh_install build/mx_accl/libmx_accl.so.$(DEB_VERSION_UPSTREAM) usr/lib/$(DEB_HOST_GNU_CPU)-linux-gnu/
-	dh_link usr/lib/$(DEB_HOST_GNU_CPU)-linux-gnu/libmx_accl.so.$(DEB_VERSION_UPSTREAM) usr/lib/$(DEB_HOST_GNU_CPU)-linux-gnu/libmx_accl.so
+	dh_install build/mx_accl/libmx_accl.so.2 usr/lib/$(DEB_HOST_GNU_CPU)-linux-gnu/
+	dh_link usr/lib/$(DEB_HOST_GNU_CPU)-linux-gnu/libmx_accl.so.2 usr/lib/$(DEB_HOST_GNU_CPU)-linux-gnu/libmx_accl.so
 	dh_install mx_accl/include/memx/* usr/include/memx/
 	dh_install build/samples/acclBench/acclBench usr/bin/
 
@@ -22,6 +22,6 @@ override_dh_auto_build:
 override_dh_auto_test:
 
 override_dh_auto_install:
-	rm -rf build ; mkdir build ; cd build ; PATH="/io/grpc_inst:$$PATH" cmake -DCMAKE_BUILD_TYPE=Packaging .. && make -j && strip --strip-debug --strip-dwo --strip-unneeded --merge-notes mx_accl/libmx_accl.so && strip mx_server/mx_server && mv -v mx_accl/libmx_accl.so mx_accl/libmx_accl.so.$(DEB_VERSION_UPSTREAM)
+	rm -rf build ; mkdir build ; cd build ; cmake -DCMAKE_BUILD_TYPE=Packaging .. && make -j 8
 
 override_dh_auto_clean:

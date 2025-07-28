@@ -1,472 +1,73 @@
-#include <memx/accl/MxAcclMT.h>
+// Copyright (c) 2025 MemryX
+// SPDX-License-Identifier: MPL-2.0
+//
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 #include <sstream>
 
-#ifndef DISABLE_DAEMON
-#include <uuid/uuid.h>
-#include <grpcpp/grpcpp.h>
-#include "mx_proc.grpc.pb.h"
-#endif
+#include "spdlog/spdlog.h"
+
+#include <memx/accl/MxAcclMT.h>
 
 using namespace MX::Runtime;
 using namespace MX::Types;
 using namespace MX::Utils;
 
-#ifndef DISABLE_DAEMON
-using mxstream::MxService;
-using mxstream::MxData;
-struct daemon_items_mt{
-    std::shared_ptr<grpc::Channel> grpc_channel_;
-    std::shared_ptr<mxstream::MxService::Stub> stub_;
-    std::shared_ptr<mxstream::MxService::Stub> model_stub_send_;
-    std::shared_ptr<mxstream::MxService::Stub> model_stub_recv_;
-    mxstream::Uuid uuid_;
-    mxstream::DfpData grpc_dfp;
-};
-#else
-struct daemon_items_mt{
-    void* grpc_channel_;
-    void* stub_;
-    void* model_stub_send_;
-    void* model_stub_recv_;
-    void* uuid_;
-    void* grpc_dfp;
-};
-#endif
-
-MxAcclMT::MxAcclMT(bool use_shared_mode, std::string server_ip, unsigned int server_port_base){
-    dfp_valid = false;
-    setup_status = false;
-  #ifndef DISABLE_DAEMON
-    grpc::ChannelArguments sync_ch_args;
-    grpc::ChannelArguments async_ch_args;
-    sync_ch_args.SetMaxSendMessageSize(1024*1024*100);
-    sync_ch_args.SetCompressionAlgorithm(GRPC_COMPRESS_NONE);
-    async_ch_args.SetCompressionAlgorithm(GRPC_COMPRESS_NONE);
-    std::string base_port = std::to_string(server_port_base);
-    std::string base_plus1 = std::to_string(server_port_base+1);
-    std::string base_plus2 = std::to_string(server_port_base+2);
-    daemon_items_ = std::make_unique<daemon_items_mt>();
-    if(!use_shared_mode){
-        daemon_items_->grpc_channel_ = grpc::CreateCustomChannel(server_ip+":"+base_port, grpc::InsecureChannelCredentials(),async_ch_args);
-        daemon_items_->stub_ = MxService::NewStub(daemon_items_->grpc_channel_);
-        device_manager = new MX::Runtime::DeviceManager(daemon_items_->stub_.get());
-    }
-    else{
-        device_manager = NULL;
-        daemon_items_->grpc_channel_ = grpc::CreateCustomChannel(server_ip+":"+base_port, grpc::InsecureChannelCredentials(),sync_ch_args);
-        daemon_items_->stub_ = MxService::NewStub(daemon_items_->grpc_channel_);
-        daemon_items_->model_stub_send_ = MxService::NewStub(grpc::CreateCustomChannel(server_ip+":"+base_plus1, grpc::InsecureChannelCredentials(),async_ch_args));
-        daemon_items_->model_stub_recv_ = MxService::NewStub(grpc::CreateCustomChannel(server_ip+":"+base_plus2, grpc::InsecureChannelCredentials(),async_ch_args));
-    }
-  #else
-    if(use_shared_mode){
-        throw std::runtime_error("This runtime was compiled with DISABLE_DAEMON, so it cannot use Shared Mode!");
-    }
-    device_manager = new MX::Runtime::DeviceManager(NULL, false);
-    daemon_items_ = std::make_unique<daemon_items_mt>();
-    daemon_items_->grpc_channel_ = NULL;
-    daemon_items_->stub_ = NULL;
-    daemon_items_->model_stub_send_ = NULL;
-    daemon_items_->model_stub_recv_ = NULL;
-    daemon_items_->uuid_ = NULL;
-    daemon_items_->grpc_dfp = NULL;
-  #endif
-}
-
-int MxAcclMT::connect_dfp(const std::filesystem::path pdfp_path, int group_id)
-{
-    std::vector<int> devices_to_use = {group_id};
-    return connect_dfp(pdfp_path,devices_to_use);
-}
-
-int MxAcclMT::connect_dfp(const uint8_t *dfp_bytes,int group_id){
-    std::vector<int> devices_to_use = {group_id};
-    return connect_dfp(dfp_bytes,devices_to_use);
-}
-
-int MxAcclMT::connect_dfp(const std::filesystem::path pdfp_path,  std::vector<int>& device_ids_to_use)
-{
-    if(dfp_valid){
-        throw std::runtime_error("Only one dfp allowed per Accl object");
-    }
-
-    if(device_ids_to_use.empty()){
-        throw runtime_error("device_ids_to_use parameter cannot be empty");
-    }
-
-    dfp_path = pdfp_path;
-    dfp_tag = 0;
-    if(device_manager!=NULL){
-        device_manager->opendfp(dfp_path, dfp_tag);
-    }
-    return connect_dfp((uint8_t*)NULL,device_ids_to_use);
-}
-
-int MxAcclMT::connect_dfp(const uint8_t *dfp_bytes, std::vector<int>& device_ids_to_use){
-    if(dfp_valid){
-        throw std::runtime_error("Only one dfp allowed per Accl object");
-    }
-
-    if(device_ids_to_use.empty()){
-        throw runtime_error("device_ids_to_use parameter cannot be empty");
-    }
-
-  #ifndef DISABLE_DAEMON
-    if(device_manager == NULL){
-        uuid_t uuid;
-        uuid_generate_time_safe(uuid);
-        uuid_unparse(uuid,uuid_str);
-        if(dfp_bytes ==NULL){
-            dfp_ = new Dfp::DfpObject(dfp_path.string().c_str());
-        }
-        else{
-            dfp_ = new Dfp::DfpObject(dfp_bytes);
-        }
-        num_models_ = dfp_->get_dfp_meta().num_models;
-        for(int i=0; i<num_models_;++i){
-            std::string s(uuid_str);
-            s+=("model"+to_string(i));
-            models_uuid.push_back(s);
-        }
-        num_chips_ = dfp_->get_dfp_meta().num_chips;
-        dfp_valid = dfp_->valid;
-        device_ids_ = device_ids_to_use;
-        grpc::ClientContext ctx;
-        for(uint32_t id : device_ids_to_use){
-            daemon_items_->grpc_dfp.add_group_id(id);
-        }
-        daemon_items_->grpc_dfp.set_dfp_bytes(dfp_->src_dfp_bytes,dfp_->dfp_byte_size);
-        daemon_items_->grpc_dfp.set_uuid(uuid_str,36);
-        mxstream::Ping reply;
-        grpc::Status status = daemon_items_->stub_->connect_dfp(&ctx,daemon_items_->grpc_dfp,&reply);
-        if(!status.ok()){
-            throw std::runtime_error("server connection for connect_dfp failed with: "+status.error_message());
-        }
-        if(!reply.recv()){
-            throw std::runtime_error(reply.msg());
-        }
-        setup_status = true;
-        this->init_mx_models(device_ids_to_use);
-        heartbeat_run.store(true);
-        heartbeat_thread = new std::thread(&MxAcclMT::heartbeat_fun,this);
-        for(int i=0; i<num_models_; i++){
-            models[i]->model_manual_start();
-        }
-        return 0;
-    }
-  #endif
-
-    dfp_tag = 0;
-    if(dfp_bytes!=NULL){
-        dfp_path = std::filesystem::path("<BYTES>");
-        device_manager->opendfp_bytes(dfp_bytes, dfp_tag);
-    }
-
-    dfp_valid = device_manager->get_dfp_validity(dfp_tag);
-    if(!dfp_valid){
-        throw runtime_error("Cannot parse dfp file - Please check given dfp");
-    }
-
-    mx_checkandthrow(device_manager->setup_mxa(dfp_tag, device_ids_to_use));
-    setup_status = true;
-  #ifndef DISABLE_DAEMON
-    local_heartbeat_thread = new std::thread(&MxAcclMT::local_heartbeat_fun,this);
-    local_heartbeat_run.store(true);
-  #endif
-    mx_checkandthrow(device_manager->attach_dfp_to_device(dfp_tag));
-    mx_checkandthrow(device_manager->download_dfp_to_device(dfp_tag));
-    mx_checkandthrow(device_manager->init_mx_models(dfp_tag, &models));
-    num_models_ =  device_manager->get_dfp_num_models(dfp_tag);
-    for(int i=0; i<num_models_; i++){
-        models[i]->model_manual_start();
-    }
-    num_chips_ = device_manager->get_dfp_num_chips(dfp_tag);
-    return dfp_tag;
-}
-
-void MxAcclMT::init_mx_models(std::vector<int>& device_ids_to_use){
-
-    for (int i = 0; i < num_models_; ++i)
-    {
-
-        vector<uint8_t> in_ports = dfp_->get_dfp_meta().model_inports[i];
-        uint8_t format = dfp_->input_port(in_ports[0])->format;
-        for(auto device_id: device_ids_to_use){
-            context_ids_vector_.push_back(device_id*2);
-        }
-        if(format == MX_FMT_RGB888){
-            // MxModel<uint8_t> *im = new MxModel<uint8_t>(i, dfp_mxa_map.at(dfp_tag).dfp, &dfp_mxa_map.at(dfp_tag).context_ids_vector);
-            // mxmodel_vector->push_back(im); 
-            throw(std::runtime_error("int inputs are currently not supported"));               
-        }
-        else{
-          #ifndef DISABLE_DAEMON
-            MxModel<float> *fm = new MxModel<float>(i, dfp_, &context_ids_vector_,daemon_items_->model_stub_send_.get(),daemon_items_->model_stub_recv_.get(),models_uuid[i]);
-          #else
-            MxModel<float> *fm = new MxModel<float>(i, dfp_, &context_ids_vector_,NULL,NULL,0);
-          #endif
-            models.push_back(fm);
-        }
-    }
-}
-
-void MxAcclMT::connect_post_model(std::filesystem::path post_model_path, int model_idx, const std::vector<size_t>& post_size_list){
-    models[model_idx]->model_set_post(post_model_path,post_size_list);
-}
-
-void MxAcclMT::connect_pre_model(std::filesystem::path pre_model_path, int model_idx){
-    models[model_idx]->model_set_pre(pre_model_path);
-}
-
 MxAcclMT::~MxAcclMT()
 {
-    //Close the MXA
-    if(dfp_valid && setup_status){
-        for (int i = 0; i < num_models_; ++i)
-        {
-            //delete all the models created
-            delete models[i];
-        }
-        models.clear();
-        if(device_manager){
-            device_manager->cleanup__all_dfps();
-            mx_checkandprint(device_manager->close_all_devices());
-          #ifndef DISABLE_DAEMON
-            local_heartbeat_run.store(false);
-            local_heartbeat_thread->join();
-            delete local_heartbeat_thread;
-            local_heartbeat_thread = NULL;
-          #endif
-        }
-      #ifndef DISABLE_DAEMON
-        else{
-            grpc::ClientContext ctx;
-            mxstream::Ping response;
-            heartbeat_run.store(false);
-            heartbeat_thread->join();
-            grpc::Status status = daemon_items_->stub_->close_process(&ctx,daemon_items_->grpc_dfp,&response);
-            if(!status.ok()){
-                std::cerr<<response.msg()<<"\n";
-            }
-            delete heartbeat_thread;
-            heartbeat_thread = NULL;
-        }
-      #endif
-    }
 
-    if(device_manager!=NULL){
-        delete device_manager;
-        device_manager = NULL;
-    }
-    if(dfp_!=NULL){
-        delete dfp_;
-        dfp_ = NULL;
-    }
-}
-
-int MxAcclMT::get_num_models(){
-    if(!dfp_valid){
-        return 0;
-    }
-    return  num_models_;
-}
-
-int MxAcclMT::get_dfp_num_chips(){
-    if(!dfp_valid){
-        throw std::runtime_error("dfp is not connected.");
-    }
-    return num_chips_;
-}
-
-MX::Types::MxModelInfo MxAcclMT::get_model_info(int model_id) const{
-    if(model_id>= static_cast<int>(models.size())){
-        std::ostringstream oss;
-        int num_models = models.size();
-        oss << "Invalid model ID passed : Number of models available = "<<num_models<<"\n model_id range is 0 to "<<num_models-1;
-        throw runtime_error(oss.str());
-    }
-    else{
-        return models[model_id]->return_model_info();
-    }
-}
-
-MX::Types::MxModelInfo MxAcclMT::get_pre_model_info(int model_id) const{
-    if(model_id>= static_cast<int>(models.size())){
-        std::ostringstream oss;
-        int num_models = models.size();
-        oss << "Invalid model ID passed : Number of models available = "<<num_models<<"\n model_id range is 0 to "<<num_models-1;
-        throw runtime_error(oss.str());
-    }
-    else{
-        return models[model_id]->return_pre_model_info();
-    }
-}
-
-MX::Types::MxModelInfo MxAcclMT::get_post_model_info(int model_id) const{
-    if(model_id>= static_cast<int>(models.size())){
-        std::ostringstream oss;
-        int num_models = models.size();
-        oss << "Invalid model ID passed : Number of models available = "<<num_models<<"\n model_id range is 0 to "<<num_models-1;
-        throw runtime_error(oss.str());
-    }
-    else{
-        return models[model_id]->return_post_model_info();
-    }
-}
-
-bool MxAcclMT::send_input(std::vector<float*> in_data, int model_id, int pstream_id, int dfp_id, bool channel_first, int32_t timeout ){
-    //!!!!TODO: Need to use dfp_id for future
-    if(dfp_id!=0){
-        throw std::runtime_error("only one dfp per MxAccl allowed");
-    }
-    if(model_id>= static_cast<int>(models.size())){
-        std::ostringstream oss;
-        int num_models = models.size();
-        oss << "Invalid model ID passed : Number of models available = "<<num_models<<"\n model_id range is 0 to "<<num_models-1;
-        throw runtime_error(oss.str());
-    }
-    return models[model_id]->model_manual_send(in_data, pstream_id,channel_first,timeout);
-}
-
-// bool MxAcclMT::send_input(std::vector<uint8_t*> in_data, int model_id, int pstream_id, bool channel_first, int32_t timeout ){
-//     return models[model_id]->model_manual_send(in_data, pstream_id,channel_first,timeout);
-// }
-
-bool MxAcclMT::receive_output(std::vector<float*> &out_data, int pmodel_id, int pstream_id, int dfp_id, bool channel_first, int32_t timeout){
-    //!!!!TODO: Need to use dfp_id for future
-    if(dfp_id!=0){
-        throw std::runtime_error("only one dfp per MxAccl allowed");
-    }
-    if(pmodel_id>= static_cast<int>(models.size())){
-        std::ostringstream oss;
-        int num_models = models.size();
-        oss << "Invalid model ID passed : Number of models available = "<<num_models<<"\n model_id range is 0 to "<<num_models-1;
-        throw runtime_error(oss.str());
-    }
-    return models[pmodel_id]->model_manual_receive(out_data, pstream_id, channel_first,timeout);
-}
-
-void MxAcclMT::set_parallel_fmap_convert(int num_threads, int model_idx){
-    if(model_idx>= static_cast<int>(models.size())){
-        std::ostringstream oss;
-        int num_models = models.size();
-        oss << "Invalid model ID passed : Number of models available = "<<num_models<<"\n model_id range is 0 to "<<num_models-1;
-        throw runtime_error(oss.str());
-    }
-    models[model_idx]->set_parallel_fmap_convert(num_threads);
-}
-
-bool MxAcclMT::run(std::vector<float *> in_data, std::vector<float*> &out_data, int pmodel_id, int pstream_id, int dfp_id, bool in_channel_first, bool out_channel_first, int32_t timeout){
-    //!!!!TODO: Need to use dfp_id for future
-    if(dfp_id!=0){
-        throw std::runtime_error("only one dfp per MxAccl allowed");
-    }
-    if(pmodel_id>= static_cast<int>(models.size())){
-        std::ostringstream oss;
-        int num_models = models.size();
-        oss << "Invalid model ID passed : Number of models available = "<<num_models<<"\n model_id range is 0 to "<<num_models-1;
-        throw runtime_error(oss.str());
-    }
-    return models[pmodel_id]->manual_run(in_data,out_data,pstream_id,in_channel_first,out_channel_first,timeout);
-}
-
-void MxAcclMT::heartbeat_fun(){
-  #ifndef DISABLE_DAEMON
-    while (heartbeat_run.load())
-    {
-        grpc::ClientContext ctx;
-        daemon_items_->uuid_.set_id(uuid_str,36);
-        mxstream::Ping response;
-        grpc::Status status = daemon_items_->stub_->heartbeat(&ctx,daemon_items_->uuid_,&response);
-        if(!status.ok()){
-            throw std::runtime_error("heartbeat failed with: "+status.error_message());
-        }
-        std::this_thread::sleep_for(250ms);   
-    }
-  #endif
-}
-
-void MxAcclMT::local_heartbeat_fun(){
-  #ifndef DISABLE_DAEMON
-    while (local_heartbeat_run.load())
-    {
-        grpc::ClientContext ctx;
-        for(int i = 0; i < static_cast<int>(device_ids_.size()); ++i){
-            mxstream::LockData lck_data;
-            lck_data.set_group_id(i);
-            mxstream::Ping response;
-            grpc::Status status = daemon_items_->stub_->local_heartbeat(&ctx,lck_data,&response);
-            if(!status.ok()){
-                throw std::runtime_error("localheartbeat failed with: "+status.error_message());
-            }
-        }
-        std::this_thread::sleep_for(250ms);   
-    }
-  #endif
-}
-
-
-bool MxAcclMT::can_get_power_consumption(){
-    if(device_manager== NULL){
-        return false;
-    }
-    else
-        {
-            return device_manager->power_data_possible_or_no();
-    }
-}
-
-const std::vector<float>&  MxAcclMT::get_power_all_devices(){
-
-    if(device_manager== NULL || device_manager->power_data_possible_or_no() == false){
-        throw std::runtime_error("Running in Shared Mode! Cannot get power details - run in local mode for power data");
-    }
-    else{
-        return device_manager->get_power_all_open_devices();
-    }
-}
-
-
-const std::vector<float>&  MxAcclMT::get_max_temperature_all_devices(){
-
-    if(device_manager== NULL ){
-        throw std::runtime_error("Running in Remote Mode! Cannot get temperature details - run in local mode for power data");
-    }
-    else{
-        return device_manager->get_max_temperature_all_open_devices();
-    }
-}
-
-const std::vector<std::vector<uint64_t>>&  MxAcclMT::get_chip_temperatures_all_devices(){
-
-    if(device_manager== NULL ){
-        throw std::runtime_error("Running in Remote Mode! Cannot get temperature details - run in local mode for power data");
-    }
-    else{
-        return device_manager->get_chip_temperature_all_open_devices();
-    }
-}
-
-bool MxAcclMT::set_operating_frequency(MxFrequencyOption freq_option) {
-    if(setup_status){
-        throw std::runtime_error("Device previously configured; cannot set frequency! Call before connecting to DFP.");
-    }
-    else {
-        if(device_manager == nullptr) {
-            throw std::runtime_error("Remote mode: setting frequency is not supported yet!");
-        }
-        else {
-            // Convert TOPSOption enum to its corresponding frequency
-            uint16_t frequency = static_cast<uint16_t>(freq_option);
-            
-            // Call set_frequency on DeviceManager
-            device_manager->set_frequency(frequency);
-            
-            // Set voltage also
-            MX::Types::MxVoltageOption volt_option = MX::Types::getVoltageFromFrequency(freq_option);
-            uint16_t volt = static_cast<uint16_t>(volt_option);
-            device_manager->set_volt(volt);
-            return true;
+    // need to call model_manual_stop for all models
+    for (auto &dfp_runner_pair : runner_table) {
+        DFPRunner* dfp_runner = dfp_runner_pair.second;
+        for (auto model : dfp_runner->models) {
+            model->model_manual_stop();
         }
     }
+
+    // base class's dtor will take care of the rest
 }
+
+bool MxAcclMT::send_input(std::vector<float*> in_data, int model_id, int stream_id, int32_t timeout)
+{
+    int dfp_id = 0; // TODO: temp solution
+
+    // Get the DFP runner --> Model object
+    std::shared_lock<std::shared_mutex> lock(runner_mutex);
+    auto it = runner_table.find(dfp_id);
+    DFPRunner* dfp_runner = it->second;
+    MxModel* model = dfp_runner->models[model_id];
+    lock.unlock();
+
+    // Check if the model is running
+    if (!model->model_manual_run.load()) {
+        // do model_manual_start
+        model->model_manual_start();
+    }
+
+    // call model_manual_send
+    return model->model_manual_send(in_data, stream_id, timeout);
+}
+
+bool MxAcclMT::receive_output(std::vector<float*> &out_data, int model_id, int stream_id, int32_t timeout)
+{
+    int dfp_id = 0; // TODO: temp solution
+
+    // Get the DFP runner --> Model object
+    std::shared_lock<std::shared_mutex> lock(runner_mutex);
+    auto it = runner_table.find(dfp_id);
+    DFPRunner* dfp_runner = it->second;
+    MxModel* model = dfp_runner->models[model_id];
+    lock.unlock();
+
+    // Check if the model is running
+    if (!model->model_manual_run.load()) {
+        // do model_manual_start
+        model->model_manual_start();
+    }
+
+    // call model_manual_receive
+    return model->model_manual_receive(out_data, stream_id, timeout);
+}
+

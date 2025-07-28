@@ -1,11 +1,19 @@
+// Copyright (c) 2025 MemryX
+// SPDX-License-Identifier: MPL-2.0
+//
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 #include <memx/accl/utils/mxTypes.h>
 
 using namespace MX::Types;
-             
+
 // Constructor
 MX::Types::ShapeVector::ShapeVector() : shape(4, 1) {} // Initialize shape with 4 elements, all initialized to 0
 // Constructor
-MX::Types::ShapeVector::ShapeVector(int64_t h, int64_t w, int64_t z, int64_t c) {
+MX::Types::ShapeVector::ShapeVector(int64_t h, int64_t w, int64_t z, int64_t c)
+{
     this->shape.reserve(4);
     this->h = h;
     this->shape.push_back(h); // = h;
@@ -18,10 +26,11 @@ MX::Types::ShapeVector::ShapeVector(int64_t h, int64_t w, int64_t z, int64_t c) 
     // std::cout<<"this shape size = "<<this->shape.size();
 }
 // Constructor
-MX::Types::ShapeVector::ShapeVector(int size) : shape(size, 1), size_(size) {} // Initialize shape with 4 elements, all initialized to 0
+MX::Types::ShapeVector::ShapeVector(int size) : shape(size, 1),
+    size_(size) {} // Initialize shape with 4 elements, all initialized to 0
 
 
-// Overload [] operator 
+// Overload [] operator
 // const int64_t& MX::Types::ShapeVector::operator[](int64_t index) const {
 //     if (index < 4) {
 //         return shape[index];
@@ -31,42 +40,50 @@ MX::Types::ShapeVector::ShapeVector(int size) : shape(size, 1), size_(size) {} /
 //     }
 // }
 
-// Overload [] operator 
-int64_t& MX::Types::ShapeVector::operator[](int64_t index) {
+// Overload [] operator
+int64_t &MX::Types::ShapeVector::operator[](int64_t index)
+{
     if (index < size_) {
         return shape[index];
-    } else {
+    }
+    else {
         std::cerr << "Error: Index out of range." << std::endl;
         throw std::runtime_error("Error: Index out of range." );
     }
 }
 
-std::vector<int64_t> MX::Types::ShapeVector::chfirst_shape(){
-    std::vector chfirst_shape{this->z, this->c, this->h, this->w};
+std::vector<int64_t> MX::Types::ShapeVector::chfirst_shape()
+{
+    std::vector chfirst_shape{this->c, this->h, this->w, this->z};
     return chfirst_shape;
 }
 
-std::vector<int64_t> MX::Types::ShapeVector::chlast_shape(){
+std::vector<int64_t> MX::Types::ShapeVector::chlast_shape()
+{
     // std::vector chfirst_shape{this->h, this->w, this->z, this->c};
     return shape;
-}             
+}
 
 // Function to return a pointer to shape vector
-int64_t* MX::Types::ShapeVector::data() {
+int64_t* MX::Types::ShapeVector::data()
+{
     return shape.data();
 }
 
 // Function to return the size of the internal vector
-int64_t MX::Types::ShapeVector::size() const {
+int64_t MX::Types::ShapeVector::size() const
+{
     return shape.size();
 }
 
-void MX::Types::ShapeVector::set_ch_first(){
+void MX::Types::ShapeVector::set_ch_first()
+{
     shape = this->chfirst_shape();
 }
 
 
-MxVoltageOption MX::Types::getVoltageFromFrequency(MxFrequencyOption freq) {
+MxVoltageOption MX::Types::getVoltageFromFrequency(MxFrequencyOption freq)
+{
     switch (freq) {
         case MxFrequencyOption::FREQ_200MHz:
         case MxFrequencyOption::FREQ_300MHz:

@@ -1,17 +1,25 @@
+// Copyright (c) 2025 MemryX
+// SPDX-License-Identifier: MPL-2.0
+//
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 #include <stdio.h>
 #include <string.h>
 #include <stdarg.h>
 #include <memx/accl/utils/mxpack.h>
 
 
-void* mxpack_get_keyval(mxpack_dict_t *d, const char* k){
+void* mxpack_get_keyval(mxpack_dict_t* d, const char* k)
+{
 
-    void *val = NULL;
+    void* val = NULL;
 
     // O(n) but that should be okay since
     // we don't expect toooo many keys...
-    for(uint32_t i=0; i < d->num_keys; i++){
-        if(strncmp(d->data[i].key, k, 64) == 0){
+    for(uint32_t i = 0; i < d->num_keys; i++) {
+        if(strncmp(d->data[i].key, k, 64) == 0) {
             val = d->data[i].value;
             break;
         }
@@ -21,10 +29,11 @@ void* mxpack_get_keyval(mxpack_dict_t *d, const char* k){
 }
 
 
-void* mxpack_get_list_item_ptr(mxpack_list_t *l, uint32_t idx){
-    if(idx >= l->num_elem) return NULL;
+void* mxpack_get_list_item_ptr(mxpack_list_t* l, uint32_t idx)
+{
+    if(idx >= l->num_elem) { return NULL; }
 
-    switch(l->dtype){
+    switch(l->dtype) {
         case MXPACK_DICT:
             return &(((mxpack_dict_t*)(l->data))[idx]);
             break;
@@ -77,56 +86,57 @@ void* mxpack_get_list_item_ptr(mxpack_list_t *l, uint32_t idx){
 
 
 
-size_t mxpack_process_list(mxpack_list_t *l, const uint8_t* b){
+size_t mxpack_process_list(mxpack_list_t* l, const uint8_t* b)
+{
 
     size_t i = 0;
 
     // special case for empty lists
-    if(l->num_elem == 0){
+    if(l->num_elem == 0) {
         l->data = NULL;
         return 0;
     }
 
     // what we do next depends on the dtype
-    switch(l->dtype){
+    switch(l->dtype) {
         case MXPACK_BOOL:
         case MXPACK_UINT8:
         case MXPACK_INT8:  // ignore signs cuz I'm lazy
             l->data = (uint8_t*) malloc(l->num_elem * sizeof(uint8_t));
-            memcpy(l->data, b+i, l->num_elem * sizeof(uint8_t));
+            memcpy(l->data, b + i, l->num_elem * sizeof(uint8_t));
             i += l->num_elem * sizeof(uint8_t);
             break;
         case MXPACK_UINT16:
         case MXPACK_INT16:
             l->data = (uint16_t*) malloc(l->num_elem * sizeof(uint16_t));
-            memcpy(l->data, b+i, l->num_elem * sizeof(uint16_t));
+            memcpy(l->data, b + i, l->num_elem * sizeof(uint16_t));
             i += l->num_elem * sizeof(uint16_t);
             break;
         case MXPACK_FP32:
         case MXPACK_UINT32:
         case MXPACK_INT32:
             l->data = (uint32_t*) malloc(l->num_elem * sizeof(uint32_t));
-            memcpy(l->data, b+i, l->num_elem * sizeof(uint32_t));
+            memcpy(l->data, b + i, l->num_elem * sizeof(uint32_t));
             i += l->num_elem * sizeof(uint32_t);
             break;
         case MXPACK_UINT64:
         case MXPACK_INT64:
             l->data = (uint64_t*) malloc(l->num_elem * sizeof(uint64_t));
-            memcpy(l->data, b+i, l->num_elem * sizeof(uint64_t));
+            memcpy(l->data, b + i, l->num_elem * sizeof(uint64_t));
             i += l->num_elem * sizeof(uint64_t);
             break;
         case MXPACK_BIN:
         case MXPACK_UTF8: {
             // we now have an !array! of mxpack_binary_t structs
-            mxpack_binary_t *d = (mxpack_binary_t*) malloc(l->num_elem * sizeof(mxpack_binary_t));
+            mxpack_binary_t* d = (mxpack_binary_t*) malloc(l->num_elem * sizeof(mxpack_binary_t));
 
             // each is processed at a time
-            for(uint32_t n=0; n < l->num_elem; n++){
-                memcpy(&(d[n].length), b+i, sizeof(uint64_t));
+            for(uint32_t n = 0; n < l->num_elem; n++) {
+                memcpy(&(d[n].length), b + i, sizeof(uint64_t));
                 i += sizeof(uint64_t);
 
                 d[n].data = (uint8_t*) malloc(d[n].length);
-                memcpy(d[n].data, b+i, d[n].length);
+                memcpy(d[n].data, b + i, d[n].length);
                 i += (size_t) d[n].length;
             }
             l->data = d;
@@ -134,14 +144,14 @@ size_t mxpack_process_list(mxpack_list_t *l, const uint8_t* b){
         }
         case MXPACK_ASCII: {
             // same deal as BIN/UTF8
-            mxpack_ascii_t *d = (mxpack_ascii_t*) malloc(l->num_elem * sizeof(mxpack_ascii_t));
+            mxpack_ascii_t* d = (mxpack_ascii_t*) malloc(l->num_elem * sizeof(mxpack_ascii_t));
 
-            for(uint32_t n=0; n < l->num_elem; n++){
-                memcpy(&(d[n].length), b+i, sizeof(uint32_t));
+            for(uint32_t n = 0; n < l->num_elem; n++) {
+                memcpy(&(d[n].length), b + i, sizeof(uint32_t));
                 i += sizeof(uint32_t);
 
                 d[n].s = (char*) malloc(d[n].length);
-                memcpy(d[n].s, b+i, d[n].length);
+                memcpy(d[n].s, b + i, d[n].length);
                 i += (size_t) d[n].length;
             }
 
@@ -150,14 +160,15 @@ size_t mxpack_process_list(mxpack_list_t *l, const uint8_t* b){
         }
         case MXPACK_DICT: {
             // list of dicts{}
-            mxpack_dict_t *d = (mxpack_dict_t*) malloc(l->num_elem * sizeof(mxpack_dict_t));
+            mxpack_dict_t* d = (mxpack_dict_t*) malloc(l->num_elem * sizeof(mxpack_dict_t));
 
-            for(uint32_t n=0; n < l->num_elem; n++){
-                size_t amt = mxpack_process_dict(&(d[n]), b+i);
-                if(amt == 0){
+            for(uint32_t n = 0; n < l->num_elem; n++) {
+                size_t amt = mxpack_process_dict(&(d[n]), b + i);
+                if(amt == 0) {
                     printf("list of dict parsing FAIL\n");
                     return 0;
-                } else {
+                }
+                else {
                     i += amt;
                 }
             }
@@ -169,22 +180,23 @@ size_t mxpack_process_list(mxpack_list_t *l, const uint8_t* b){
         case MXPACK_NUMPY:
         case MXPACK_LIST: {
             // nested lists? hoohboy
-            mxpack_list_t *d = (mxpack_list_t*) malloc(l->num_elem * sizeof(mxpack_list_t));
+            mxpack_list_t* d = (mxpack_list_t*) malloc(l->num_elem * sizeof(mxpack_list_t));
 
-            for(uint32_t n=0; n < l->num_elem; n++){
+            for(uint32_t n = 0; n < l->num_elem; n++) {
                 // list dtype
-                memcpy(&(d[n].dtype), b+i, 1);
+                memcpy(&(d[n].dtype), b + i, 1);
                 i += 1;
 
                 // list num_elem
-                memcpy(&(d[n].num_elem), b+i, sizeof(uint32_t));
+                memcpy(&(d[n].num_elem), b + i, sizeof(uint32_t));
                 i += sizeof(uint32_t);
 
-                size_t amt = mxpack_process_list(&(d[n]), b+i);
-                if(amt == 0){
+                size_t amt = mxpack_process_list(&(d[n]), b + i);
+                if(amt == 0) {
                     printf("nested list parsing FAIL\n");
                     return 0;
-                } else {
+                }
+                else {
                     i += amt;
                 }
             }
@@ -201,75 +213,77 @@ size_t mxpack_process_list(mxpack_list_t *l, const uint8_t* b){
 }
 
 
-size_t mxpack_decode_dict_entry(mxpack_dict_entry_t *e, const uint8_t* b){
+size_t mxpack_decode_dict_entry(mxpack_dict_entry_t* e, const uint8_t* b)
+{
 
     size_t i = 0;
-    memcpy(e->key, b+i, 64);
+    memcpy(e->key, b + i, 64);
     i += 64;
 
     // force null-terminate
     e->key[63] = '\0';
 
     // value's dtype
-    memcpy(&(e->dtype), b+i, 1);
+    memcpy(&(e->dtype), b + i, 1);
     i += 1;
 
-    switch(e->dtype){
+    switch(e->dtype) {
         case MXPACK_BOOL:
         case MXPACK_UINT8:
         case MXPACK_INT8:  // ignore signs cuz I'm lazy
-            e->value = (uint8_t*) malloc(1*sizeof(uint8_t));
-            memcpy(e->value, b+i, 1*sizeof(uint8_t));
+            e->value = (uint8_t*) malloc(1 * sizeof(uint8_t));
+            memcpy(e->value, b + i, 1 * sizeof(uint8_t));
             i += sizeof(uint8_t);
             break;
         case MXPACK_UINT16:
         case MXPACK_INT16:
-            e->value = (uint16_t*) malloc(1*sizeof(uint16_t));
-            memcpy(e->value, b+i, 1*sizeof(uint16_t));
+            e->value = (uint16_t*) malloc(1 * sizeof(uint16_t));
+            memcpy(e->value, b + i, 1 * sizeof(uint16_t));
             i += sizeof(uint16_t);
             break;
         case MXPACK_UINT32:
         case MXPACK_INT32:
         case MXPACK_FP32:
-            e->value = (uint32_t*) malloc(1*sizeof(uint32_t));
-            memcpy(e->value, b+i, 1*sizeof(uint32_t));
+            e->value = (uint32_t*) malloc(1 * sizeof(uint32_t));
+            memcpy(e->value, b + i, 1 * sizeof(uint32_t));
             i += sizeof(uint32_t);
             break;
         case MXPACK_UINT64:
         case MXPACK_INT64:
-            e->value = (uint64_t*) malloc(1*sizeof(uint64_t));
-            memcpy(e->value, b+i, 1*sizeof(uint64_t));
+            e->value = (uint64_t*) malloc(1 * sizeof(uint64_t));
+            memcpy(e->value, b + i, 1 * sizeof(uint64_t));
             i += sizeof(uint64_t);
             break;
         case MXPACK_BIN:
         case MXPACK_UTF8: {
-            mxpack_binary_t *d = (mxpack_binary_t*) malloc(1*sizeof(mxpack_binary_t));
-            memcpy(&(d->length), b+i, 1*sizeof(uint64_t));
+            mxpack_binary_t* d = (mxpack_binary_t*) malloc(1 * sizeof(mxpack_binary_t));
+            memcpy(&(d->length), b + i, 1 * sizeof(uint64_t));
             i += sizeof(uint64_t);
             d->data = (uint8_t*) malloc(d->length);
-            memcpy(d->data, b+i, d->length);
+            memcpy(d->data, b + i, d->length);
             i += (size_t) d->length;
             e->value = d;
             break;
         }
         case MXPACK_ASCII: {
-            mxpack_ascii_t *d = (mxpack_ascii_t*) malloc(1*sizeof(mxpack_ascii_t));
-            memcpy(&(d->length), b+i, 1*sizeof(uint32_t));
+            mxpack_ascii_t* d = (mxpack_ascii_t*) malloc(1 * sizeof(mxpack_ascii_t));
+            memcpy(&(d->length), b + i, 1 * sizeof(uint32_t));
             i += sizeof(uint32_t);
             d->s = (char*) malloc(d->length);
-            memcpy(d->s, b+i, d->length);
+            memcpy(d->s, b + i, d->length);
             i += (size_t) d->length;
             e->value = d;
             break;
         }
         case MXPACK_DICT: {
-            e->value = (mxpack_dict_t*) malloc(1*sizeof(mxpack_dict_t));
+            e->value = (mxpack_dict_t*) malloc(1 * sizeof(mxpack_dict_t));
 
-            size_t amt = mxpack_process_dict((mxpack_dict_t*)e->value, b+i);
-            if(amt == 0){
+            size_t amt = mxpack_process_dict((mxpack_dict_t*)e->value, b + i);
+            if(amt == 0) {
                 printf("nested mxpack_parse FAIL\n");
                 return 0;
-            } else {
+            }
+            else {
                 i += amt;
             }
             break;
@@ -277,28 +291,30 @@ size_t mxpack_decode_dict_entry(mxpack_dict_entry_t *e, const uint8_t* b){
         case MXPACK_NUMPY:
         case MXPACK_LIST: {
             // create the list obj
-            mxpack_list_t *d = (mxpack_list_t*) malloc(sizeof(mxpack_list_t));
+            mxpack_list_t* d = (mxpack_list_t*) malloc(sizeof(mxpack_list_t));
 
             // get the list member dtype
-            memcpy(&(d->dtype), b+i, 1);
+            memcpy(&(d->dtype), b + i, 1);
             i += 1;
 
             // get the number of list elements
-            memcpy(&(d->num_elem), b+i, sizeof(uint32_t));
+            memcpy(&(d->num_elem), b + i, sizeof(uint32_t));
             i += sizeof(uint32_t);
 
             // special case for empty lists
-            if(d->num_elem == 0){
+            if(d->num_elem == 0) {
                 d->data = NULL;
                 e->value = d;
                 break;
-            } else {
+            }
+            else {
                 // process the list
-                size_t amt = mxpack_process_list(d, b+i);
-                if(amt == 0){
+                size_t amt = mxpack_process_list(d, b + i);
+                if(amt == 0) {
                     printf("dict's parsing of list FAIL\n");
                     return 0;
-                } else {
+                }
+                else {
                     i += amt;
                 }
                 e->value = d;
@@ -314,24 +330,26 @@ size_t mxpack_decode_dict_entry(mxpack_dict_entry_t *e, const uint8_t* b){
 }
 
 
-size_t mxpack_process_dict(mxpack_dict_t *d, const uint8_t* b){
+size_t mxpack_process_dict(mxpack_dict_t* d, const uint8_t* b)
+{
 
     size_t i = 0;
 
     // get num_keys
-    memcpy(&(d->num_keys), b+i, sizeof(uint32_t));
+    memcpy(&(d->num_keys), b + i, sizeof(uint32_t));
     i += sizeof(uint32_t);
 
     // alloc that many dict entries
     d->data = (mxpack_dict_entry_t*) malloc(d->num_keys * sizeof(mxpack_dict_entry_t));
 
-    for(uint32_t n=0; n < d->num_keys; n++){
+    for(uint32_t n = 0; n < d->num_keys; n++) {
 
-        size_t amt = mxpack_decode_dict_entry(&(d->data[n]), b+i);
-        if(amt == 0){
+        size_t amt = mxpack_decode_dict_entry(&(d->data[n]), b + i);
+        if(amt == 0) {
             printf("parse_dict failed on parse dict_entry FAIL\n");
             return 0;
-        } else {
+        }
+        else {
             i += amt;
         }
 
@@ -343,11 +361,12 @@ size_t mxpack_process_dict(mxpack_dict_t *d, const uint8_t* b){
 
 //------------------------------------------------------------------------------
 
-void mxpack_free_dict_entry(mxpack_dict_entry_t *e){
+void mxpack_free_dict_entry(mxpack_dict_entry_t* e)
+{
 
-    if(e == NULL) return;
+    if(e == NULL) { return; }
 
-    switch(e->dtype){
+    switch(e->dtype) {
         case MXPACK_BOOL:
         case MXPACK_UINT8:
         case MXPACK_UINT16:
@@ -392,11 +411,12 @@ void mxpack_free_dict_entry(mxpack_dict_entry_t *e){
 }
 
 
-void mxpack_free_dict(mxpack_dict_t *d){
+void mxpack_free_dict(mxpack_dict_t* d)
+{
 
-    if(d == NULL) return;
+    if(d == NULL) { return; }
 
-    for(uint32_t i=0; i < d->num_keys; i++){
+    for(uint32_t i = 0; i < d->num_keys; i++) {
         mxpack_free_dict_entry( &(d->data[i]) );
     }
     free(d->data);
@@ -404,14 +424,15 @@ void mxpack_free_dict(mxpack_dict_t *d){
 }
 
 
-void mxpack_free_list(mxpack_list_t *l){
+void mxpack_free_list(mxpack_list_t* l)
+{
 
-    if(l == NULL) return;
+    if(l == NULL) { return; }
 
     // empty list
-    if(l->data == NULL) return;
+    if(l->data == NULL) { return; }
 
-    switch(l->dtype){
+    switch(l->dtype) {
         case MXPACK_BOOL:
         case MXPACK_UINT8:
         case MXPACK_UINT16:
@@ -426,7 +447,7 @@ void mxpack_free_list(mxpack_list_t *l){
             l->data = NULL;
             break;
         case MXPACK_DICT:
-            for(uint32_t i=0; i < l->num_elem; i++){
+            for(uint32_t i = 0; i < l->num_elem; i++) {
                 mxpack_free_dict( &(((mxpack_dict_t*)l->data)[i]) );
             }
             free(l->data);
@@ -434,7 +455,7 @@ void mxpack_free_list(mxpack_list_t *l){
             break;
         case MXPACK_NUMPY:
         case MXPACK_LIST:
-            for(uint32_t i=0; i < l->num_elem; i++){
+            for(uint32_t i = 0; i < l->num_elem; i++) {
                 mxpack_free_list( &(((mxpack_list_t*)l->data)[i]) );
             }
             free(l->data);
@@ -442,7 +463,7 @@ void mxpack_free_list(mxpack_list_t *l){
             break;
         case MXPACK_BIN:
         case MXPACK_UTF8:
-            for(uint32_t i=0; i < l->num_elem; i++){
+            for(uint32_t i = 0; i < l->num_elem; i++) {
                 free( (((mxpack_binary_t*)l->data)[i]).data );
                 (((mxpack_binary_t*)l->data)[i]).data = NULL;
             }
@@ -450,7 +471,7 @@ void mxpack_free_list(mxpack_list_t *l){
             l->data = NULL;
             break;
         case MXPACK_ASCII:
-            for(uint32_t i=0; i < l->num_elem; i++){
+            for(uint32_t i = 0; i < l->num_elem; i++) {
                 free( (((mxpack_ascii_t*)l->data)[i]).s );
                 (((mxpack_ascii_t*)l->data)[i]).s = NULL;
             }
@@ -467,17 +488,19 @@ void mxpack_free_list(mxpack_list_t *l){
 //------------------------------------------------------------------------------
 
 
-void inprintf(int num, const char *format, ...){
+void inprintf(int num, const char* format, ...)
+{
     va_list args;
     va_start(args, format);
-    for(int i=0; i < num; i++) printf(" ");
+    for(int i = 0; i < num; i++) { printf(" "); }
     vprintf(format, args);
     fflush(stdout);
     va_end(args);
 }
 
-const char* mxpack_type2str(uint8_t t){
-    switch(t){
+const char* mxpack_type2str(uint8_t t)
+{
+    switch(t) {
         case MXPACK_BOOL:
             return "bool";
         case MXPACK_UINT8:
@@ -516,14 +539,15 @@ const char* mxpack_type2str(uint8_t t){
 }
 
 
-void mxpack_print_dict(const mxpack_dict_t *d, int il){
+void mxpack_print_dict(const mxpack_dict_t* d, int il)
+{
 
     inprintf(il, "{\n");
     il++;
 
-    for(uint32_t i=0; i < d->num_keys; i++){
+    for(uint32_t i = 0; i < d->num_keys; i++) {
 
-        switch(d->data[i].dtype){
+        switch(d->data[i].dtype) {
 
             case MXPACK_BOOL:
                 inprintf(il, "\"%s\" (bool): %s\n", d->data[i].key, (*((uint8_t*) d->data[i].value) == 0) ? "false" : "true" );
@@ -566,15 +590,15 @@ void mxpack_print_dict(const mxpack_dict_t *d, int il){
                 break;
             case MXPACK_DICT:
                 inprintf(il, "\"%s\" (dict):\n", d->data[i].key);
-                mxpack_print_dict((mxpack_dict_t*) d->data[i].value, il+2);
+                mxpack_print_dict((mxpack_dict_t*) d->data[i].value, il + 2);
                 break;
             case MXPACK_LIST:
                 inprintf(il, "\"%s\" (list of %s):\n", d->data[i].key, mxpack_type2str(((mxpack_list_t*)(d->data[i].value))->dtype));
-                mxpack_print_list((mxpack_list_t*) d->data[i].value, il+2);
+                mxpack_print_list((mxpack_list_t*) d->data[i].value, il + 2);
                 break;
             case MXPACK_NUMPY:
                 inprintf(il, "\"%s\" (ndarray of %s):\n", d->data[i].key, mxpack_type2str(((mxpack_list_t*)(d->data[i].value))->dtype));
-                mxpack_print_list((mxpack_list_t*) d->data[i].value, il+2);
+                mxpack_print_list((mxpack_list_t*) d->data[i].value, il + 2);
                 break;
             default:
                 inprintf(il, "\"%s\": ERROR! UNKNOWN DTYPE!!\n", d->data[i].key);
@@ -589,12 +613,13 @@ void mxpack_print_dict(const mxpack_dict_t *d, int il){
 
 
 
-void mxpack_print_list(const mxpack_list_t *l, int il){
+void mxpack_print_list(const mxpack_list_t* l, int il)
+{
 
     inprintf(il, "[\n");
     il++;
 
-    switch(l->dtype){
+    switch(l->dtype) {
         case MXPACK_BOOL:
         case MXPACK_UINT8:
         case MXPACK_UINT16:
@@ -614,14 +639,14 @@ void mxpack_print_list(const mxpack_list_t *l, int il){
             break;
     }
 
-    if(l->num_elem == 0){
+    if(l->num_elem == 0) {
         il--;
         inprintf(il, "]\n");
         return;
     }
 
-    for(uint32_t i=0; i < (l->num_elem - 1); i++){
-        switch(l->dtype){
+    for(uint32_t i = 0; i < (l->num_elem - 1); i++) {
+        switch(l->dtype) {
             case MXPACK_BOOL:
                 printf("%s, ", (((uint8_t*) l->data)[i] == 0) ? "false" : "true" );
                 break;
@@ -663,11 +688,11 @@ void mxpack_print_list(const mxpack_list_t *l, int il){
                 break;
             case MXPACK_DICT:
                 // yeah yeah, we miss a "," this way... deal with it
-                mxpack_print_dict( &(((mxpack_dict_t*)(l->data))[i]), il+2 );
+                mxpack_print_dict( &(((mxpack_dict_t*)(l->data))[i]), il + 2 );
                 break;
             case MXPACK_NUMPY:
             case MXPACK_LIST:
-                mxpack_print_list( &(((mxpack_list_t*)(l->data))[i]), il+2 );
+                mxpack_print_list( &(((mxpack_list_t*)(l->data))[i]), il + 2 );
                 break;
             default:
                 inprintf(il, "!INVALID! ");
@@ -677,7 +702,7 @@ void mxpack_print_list(const mxpack_list_t *l, int il){
 
     // final element is ~special~ and doesn't get a comma
     int i = l->num_elem - 1;
-    switch(l->dtype){
+    switch(l->dtype) {
         case MXPACK_BOOL:
             printf("%s\n", (((uint8_t*) l->data)[i] == 0) ? "false" : "true" );
             break;
@@ -719,11 +744,11 @@ void mxpack_print_list(const mxpack_list_t *l, int il){
             break;
         case MXPACK_DICT:
             // yeah yeah, we miss a "," this way... deal with it
-            mxpack_print_dict( &(((mxpack_dict_t*)(l->data))[i]), il+2 );
+            mxpack_print_dict( &(((mxpack_dict_t*)(l->data))[i]), il + 2 );
             break;
         case MXPACK_NUMPY:
         case MXPACK_LIST:
-            mxpack_print_list( &(((mxpack_list_t*)(l->data))[i]), il+2 );
+            mxpack_print_list( &(((mxpack_list_t*)(l->data))[i]), il + 2 );
             break;
         default:
             inprintf(il, "!INVALID!\n");
@@ -735,21 +760,22 @@ void mxpack_print_list(const mxpack_list_t *l, int il){
     inprintf(il, "]\n");
 }
 
-uint8_t* dfpv6_extract_hw_dfp_bytes(const uint8_t *b, uint64_t& length){
+uint8_t* dfpv6_extract_hw_dfp_bytes(const uint8_t* b, uint64_t &length)
+{
 
-    if(b == NULL) return 0;
+    if(b == NULL) { return 0; }
 
     // make sure it's an mxpack dict
-    if(b[0] != 0x01) return 0;
+    if(b[0] != 0x01) { return 0; }
 
     mxpack_dict_t d;
     size_t num_pbytes = 0;
-    num_pbytes = mxpack_process_dict(&d, b+1);
-    if(num_pbytes == 0) return 0;
+    num_pbytes = mxpack_process_dict(&d, b + 1);
+    if(num_pbytes == 0) { return 0; }
 
     // extract hw dfp
-    mxpack_binary_t *sdfp = (mxpack_binary_t*) mxpack_get_keyval(&d, "hw_dfp");
-    if(sdfp == NULL){
+    mxpack_binary_t* sdfp = (mxpack_binary_t*) mxpack_get_keyval(&d, "hw_dfp");
+    if(sdfp == NULL) {
         mxpack_free_dict(&d);
         return 0;
     }

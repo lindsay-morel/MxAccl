@@ -1,156 +1,220 @@
-#ifndef FEATUREMAP_H
-#define FEATUREMAP_H
+// Copyright (c) 2025 MemryX
+// SPDX-License-Identifier: MPL-2.0
+//
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+#ifndef MX_FEATUREMAP_H
+#define MX_FEATUREMAP_H
+
+#pragma once
 #include <vector>
 #include <stdint.h>
 #include <stdexcept>
 #include <atomic>
+#include <unordered_set>
+
+#include <memx/accl/dfp.h>
+#include <memx/accl/utils/macros.h>
 #include <memx/accl/utils/general.h>
 #include <memx/accl/utils/errors.h>
 #include <memx/accl/utils/mxTypes.h>
+
 namespace MX
 {
-    namespace Types
-    {
-        //                          0             1              2              3              4            5              6
-        enum MEMX_API_EXPORT MX_data_format { MX_FMT_GBF80, MX_FMT_RGB565, MX_FMT_RGB888, MX_FMT_YUV422, MX_FMT_BF16, MX_FMT_FP32, MX_FMT_GBF80_ROW};
+namespace Types
+{
+enum MEMX_API_EXPORT MX_data_format : uint8_t { MX_FMT_GBF80  = 0,
+                                                MX_FMT_RGB565 = 1,
+                                                MX_FMT_RGB888 = 2,
+                                                MX_FMT_YUV422 = 3,
+                                                MX_FMT_BF16   = 4,
+                                                MX_FMT_FP32   = 5,
+                                                MX_FMT_GBF80_ROW = 6};
 
-        enum MEMX_API_EXPORT FeatureMap_Type{ FM_DFP, FM_PRE, FM_POST};
+enum MEMX_API_EXPORT FeatureMap_Type { FM_DFP, FM_PRE, FM_POST, FM_PREPOST };
 
-        /**
-         * @brief The FeatureMap class
-         *
-         * FeatureMaps are entities that are internally used by MxAccl to hold
-         * and manipulate data. It provides required methods such as set_data() and
-         * get_data() for the users to safely send and receive data from MxAccl.
-         *
-         */
-        template <typename T>
-        class FeatureMap
-        {
-        public:
-            /**
-             * @brief Constructor to featureMap - creates a data block of given size and sets all necessary dimension of the featureMap
-             *
-             * @param size      featureMap size
-             * @param format    featureMap format
-             * @param dim_h     Height of the featureMap
-             * @param num_chan  Width of the featureMap
-             * @param dim_z     Z dimension of featureMap
-             * @param num_chan  number of channels
-             * @param fmap_convert_threads number of threads to use for format convert / transpose
-             */
-            MEMX_API_EXPORT FeatureMap(size_t size, MX_data_format format = MX_FMT_FP32, uint16_t dim_h = 0, uint16_t dim_w = 0, uint16_t dim_z = 0, size_t num_chan = 0, int fmap_convert_threads = 1);
+/**
+ * @class FeatureMap
+ * @brief Encapsulates data buffers used by MxAccl for input and output feature maps.
+ *
+ * The FeatureMap class represents a data container used internally by MxAccl to manage
+ * tensor data across the accelerator interface. It provides methods to safely send 
+ * (`set_data`) and retrieve (`get_data`) data while abstracting low-level memory management.
+ */
+class FeatureMap
+{
+public:
+    /**
+     * @brief Constructs a FeatureMap by allocating a data block of the given size and
+     *        setting its dimensions and format.
+     *
+     * @param size                  Size of the feature map buffer (in bytes or elements, depending on format).
+     * @param format                Data format (e.g., FP32, INT8).
+     * @param dim_h                 Height dimension.
+     * @param dim_w                 Width dimension.
+     * @param dim_z                 Depth (Z) dimension.
+     * @param num_chan              Number of channels.
+     * @param fmap_convert_threads  Number of threads used for format conversion or transposition.
+     * @param use_model_shape       Whether to use the model-defined shape instead of explicit dimensions.
+     * @param port_info             Optional port metadata for alignment with model I/O configuration.
+     */
+    MEMX_API_EXPORT FeatureMap(size_t size, MX_data_format format = MX_FMT_FP32, uint16_t dim_h = 0, uint16_t dim_w = 0,
+                               uint16_t dim_z = 0, uint32_t num_chan = 0, int fmap_convert_threads = 1, bool use_model_shape = false,
+                               Dfp::PortInfo* port_info = nullptr);
 
-            /**
-             * @brief Additional Constructor to featureMap - creates a data block and copies the input data to the block and sets all necessary dimensions of the featureMap
-             *
-             * @param input     Pointer to input data to featureMap
-             * @param size      featureMap size
-             * @param format    featureMap format
-             * @param dim_h     Height of the featureMap
-             * @param num_chan  Width of the featureMap
-             * @param dim_z     Z dimension of featureMap
-             * @param num_chan  number of channels
-             * @param fmap_convert_threads number of threads to use for format convert / transpose
-             */
-            MEMX_API_EXPORT FeatureMap(T *input, size_t size, MX_data_format format = MX_FMT_FP32, uint16_t dim_h = 0, uint16_t dim_w = 0, uint16_t dim_z = 0, size_t num_chan = 0, int fmap_convert_threads = 1);
+    /**
+     * @brief Constructs a FeatureMap and initializes it with the provided input data.
+     *
+     * A new data block is allocated and populated with the contents of `input`.
+     * Dimensions and format are configured as specified.
+     *
+     * @param input                 Pointer to input data to copy into the feature map.
+     * @param size                  Size of the feature map buffer.
+     * @param format                Data format.
+     * @param dim_h                 Height dimension.
+     * @param dim_w                 Width dimension.
+     * @param dim_z                 Depth (Z) dimension.
+     * @param num_chan              Number of channels.
+     * @param fmap_convert_threads  Number of threads used for format conversion or transposition.
+     * @param use_model_shape       Whether to use the model-defined shape.
+     * @param port_info             Optional port metadata for model alignment.
+     */
+    MEMX_API_EXPORT FeatureMap(float* input, size_t size, MX_data_format format = MX_FMT_FP32, uint16_t dim_h = 0, uint16_t dim_w = 0,
+                               uint16_t dim_z = 0, uint32_t num_chan = 0, int fmap_convert_threads = 1, bool use_model_shape = false,
+                               Dfp::PortInfo* port_info = nullptr);
 
-            /**
-             * @brief Copy constructor of the featureMap. Copies all necessary information from another featureMap
-             *
-             * @param rhs featureMap object
-             */
-            MEMX_API_EXPORT FeatureMap(const FeatureMap& rhs);
+    /**
+     * @brief Copy constructor.
+     *
+     * Creates a deep copy of the provided FeatureMap instance, duplicating all
+     * internal metadata and buffer content.
+     *
+     * @param rhs FeatureMap instance to copy from.
+     */
+    MEMX_API_EXPORT FeatureMap(const FeatureMap &rhs);
 
-            /**
-             * @brief Function get output from Accelarator. Copies output data from featureMap to passed pointer
-             *
-             * @param out_data pointer to destination where output data from accelrator to be copied
-             * @param channel_first boolean variable based on which output data is copied in channel first or channel last format. default is false to return channel last format
-             * @return MX_Status Success if the copy is successfull
-             */
-            MEMX_API_EXPORT MX::Utils::MX_status get_data(T *out_data , bool channel_first=false) const;
+    /**
+     * @brief Retrieves the data from the accelerator's output buffer into the given destination.
+     *
+     * This method copies data from the internal feature map buffer into the user-provided
+     * memory pointed to by `out_data`.
+     *
+     * @param out_data Pointer to the destination buffer for the output data.
+     * @return MX_Status indicating success or failure.
+     */
+    MEMX_API_EXPORT MX::Utils::MX_status get_data(float* out_data) const;
 
-            /**
-             * @brief Function get output from Accelarator. Sets the internal pointer to the featureMap to the passed out_data pointer. Does not copy data from featureMap to passed pointer.
-             * The out_data pointer can never be deleted by the user. It is owned by the featureMap. The validity of the out_data pointer is until the callback is returned.
-             * This function is intended for embedded systems with slow dram access. So unless necessary, get_data() should be used.
-             * 
-             * @param out_data pointer to destination where output data from accelrator to be copied
-             * @param channel_first boolean variable based on which output data is copied in channel first or channel last format. default is false to return channel last format
-             * @return MX_Status Success if the copy is successfull
-             */
-            MEMX_API_EXPORT MX::Utils::MX_status get_data_no_copy(T*& out_data, bool channel_first = false) const;
+    /**
+     * @brief Sets the input data to be sent to the accelerator.
+     *
+     * Copies data from the user-provided `in_data` pointer into the feature map's internal buffer.
+     *
+     * @param in_data Pointer to the source input data.
+     * @return MX_Status indicating success or failure.
+     */
+    MEMX_API_EXPORT MX::Utils::MX_status set_data(float* in_data) const;
 
-            /**
-             * @brief Function to set input data to Accelarator. Copies data from provided input pointer to featureMap
-             *
-             * @param in_data pointer to source from where input data is to be copied from
-             * @param channel_first boolean variable that indicates the copied data is in channel first or channle last format. default is false expecting data in channel last format
-             * @return MX_Status Success if the copy is successfull
-             */
-            MEMX_API_EXPORT MX::Utils::MX_status set_data(T *in_data , bool channel_first=false) const;
-            //Returns the data pointer of featureMap after
+    MEMX_API_EXPORT void set_data_len(float* in_data, size_t data_len = 0) const;
 
-            MEMX_API_EXPORT void set_data_len(T *in_data, size_t data_len=0) const;
+    MEMX_API_EXPORT void get_data_len(float* out_data, size_t data_len = 0) const;
 
-            MEMX_API_EXPORT void get_data_len(T *out_data, size_t data_len=0) const;
+    //Returns the pointer of formatted data of featureMap
+    MEMX_API_EXPORT uint8_t* get_formatted_data();
 
-            //Returns the pointer of formatted data of featureMap
-            MEMX_API_EXPORT uint8_t *get_formatted_data();
+    MEMX_API_EXPORT ~FeatureMap();
+    //sets the the in_ready flag to user input
+    MEMX_API_EXPORT void set_in_ready(bool flag);
+    //sets the the out_ready flag to user input
+    MEMX_API_EXPORT void set_out_ready(bool flag);
+    //return in_ready flag
+    MEMX_API_EXPORT bool get_in_ready();
+    //returns out_ready flag
+    MEMX_API_EXPORT bool get_out_ready();
+    // Transpose function to use if channel first is required
+    MEMX_API_EXPORT void transpose_hwdc_chwd(const void* vinput, void* voutput) const;
+    //transpose function to use if channel last is required
+    MEMX_API_EXPORT void transpose_chwd_hwdc(const void* vinput, void* voutput) const;
 
-            MEMX_API_EXPORT virtual ~FeatureMap();
-            //sets the the in_ready flag to user input
-            MEMX_API_EXPORT void set_in_ready(bool flag);
-            //sets the the out_ready flag to user input
-            MEMX_API_EXPORT void set_out_ready(bool flag);
-            //return in_ready flag
-            MEMX_API_EXPORT bool get_in_ready();
-            //returns out_ready flag
-            MEMX_API_EXPORT bool get_out_ready();
-            // Transpose function to use if channel first is required
-            MEMX_API_EXPORT void transpose_hwc_chw(T* input, T* output) const;
-            //transpose function to use if channel last is required
-            MEMX_API_EXPORT void transpose_chw_hwc(T* input, T* output) const;
+    // types of ops:
+    //  '+' add dim: no affect on data
+    //  '-' remove dim: no affect on data
+    //  'transpose': affects data and moves axis around
+    //  'reshape': does not actually change anything in the 1D data
 
-            //copy assignment operator
-            MEMX_API_EXPORT FeatureMap& operator=(const FeatureMap& rhs);
+    // for now, we'll just support +/- (as no-op)
 
-            MEMX_API_EXPORT size_t get_formatted_size();
-            MEMX_API_EXPORT std::vector<int64_t> shape(bool channel_first=false) const;
-            MEMX_API_EXPORT T* get_data_ptr();
-            MEMX_API_EXPORT int get_num_fmap_threads() const;
-            
-            FeatureMap_Type fm_type = FM_DFP;
-        private:
-            mutable T *fmap_data; // data in user-facing format (float or uint8_t)
-            mutable T *transposed_fmap_data;
-            T* fmap_data_internal;
-            T* transposed_fmap_data_internal;
-            size_t featureMap_size; // size, in terms of user-facing format
-            MX_data_format fmt; // data format
-            uint8_t *formatted_data;
-            size_t formatted_featuremap_size; // how many bytes the converted data is
-            void convert_data() const; // converts *data -> *formatted_data
-            void unconvert_data() const; // converts *formatted_data -> *data
-            void calc_convert_size_and_new(); // calculates size for and allocates formatted bytes
-            mutable std::atomic_bool out_ready; //flag that is used by MxModel
-            mutable std::atomic_bool in_ready; //flag that is used by MxModel
-            std::mutex wait_m; //
-            bool wait_flag;
-            std::condition_variable wait_cv;
+    //copy assignment operator
+    MEMX_API_EXPORT FeatureMap &operator=(const FeatureMap &rhs);
 
-            /* dimension variables used for GBF calculations, shape and transofrms*/
-            uint16_t dim_h;      // shape dimension x (height)
-            uint16_t dim_w;      // shape dimension y (width)
-            uint16_t dim_z;      // shape dimension z
-            uint16_t num_ch;      // number of channels -- used for GBF calculations, shape and transforms
+    MEMX_API_EXPORT size_t get_formatted_size();
+    MEMX_API_EXPORT std::vector<int64_t> shape() const;
+    MEMX_API_EXPORT void* get_data_ptr();
+    MEMX_API_EXPORT int get_num_fmap_threads() const;
 
-            int fmap_convert_threads_;
+    FeatureMap_Type fm_type = FM_DFP;
 
-        };
-    } // namespace Types
+
+    bool use_model_shape_;
+
+    // non-exposed functions for use with pre/post within MxModel
+    void set_data_force_tpose(float* in_data, bool do_a_tpose) const;
+    void get_data_force_tpose(float* out_data, bool do_a_tpose) const;
+
+
+  private:
+    mutable uint32_t* fmap_data; // data in user-facing format (float or uint8_t)
+    mutable uint32_t* temp_float_buffer;
+    uint32_t* fmap_data_internal;
+    uint32_t* temp_float_buffer_internal;
+    size_t featureMap_size; // size, in terms of user-facing format
+    MX_data_format fmt; // data format
+    uint8_t* formatted_data;
+    void convert_data(void* vdata) const; // converts *data -> *formatted_data
+    void unconvert_data(void* vdata) const; // converts *formatted_data -> *data
+    void calc_convert_size_and_new(); // calculates size for and allocates formatted bytes
+    mutable std::atomic_bool out_ready; //flag that is used by MxModel
+    mutable std::atomic_bool in_ready; //flag that is used by MxModel
+    std::mutex wait_m; //
+    bool wait_flag;
+    std::condition_variable wait_cv;
+
+    /* dimension variables used for GBF calculations, shape and transofrms*/
+    uint16_t dim_h;      // shape dimension x (height)
+    uint16_t dim_w;      // shape dimension y (width)
+    uint16_t dim_z;      // shape dimension z
+    uint32_t dim_c;      // number of channels -- used for GBF calculations, shape and transforms
+    uint32_t hpoc_dim_c;
+    bool     hpoc_en;
+    uint16_t hpoc_list_length; // HPOC channel list length
+    uint16_t *hpoc_dummy_channels; // list of dummy channels to remove
+
+    int fmap_convert_threads_;
+
+    Dfp::PortInfo* pinfo;
+
+    // common case: just transpose between HWC and CHW
+    bool only_transpose;
+    void detect_only_transpose();
+
+    //void painfully_do_every_operation(const float* input, float* output, bool reverse) const;
+
+    // stored constants for format en/decoding
+    //-------------------------------------------------
+    size_t formatted_featuremap_size; // how many bytes the converted data is
+    uint32_t real_dim_c; // real number of channels, before HPOC scrunching
+    uint32_t num_xyz_pixels; // number of pixels in the featureMap, i.e. dim_h * dim_w * dim_z
+    uint32_t num_gbf_words;
+    uint32_t num_gbf_per_pixel;
+    bool     any_remainder_chs;
+    uint32_t gbf80_pixel_size;
+    uint32_t gbf80_row_size;
+    uint32_t gbf80_row_size_rowpad;
+    uint32_t flt32_row_size;
+
+};
+} // namespace Types
 } // namespace MX
 
 #endif

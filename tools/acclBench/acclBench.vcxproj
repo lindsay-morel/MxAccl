@@ -131,7 +131,8 @@
       <Command>copy /Y "$(ProjectDir)..\..\mx_accl\x64\Release\memx-accl.dll" $(OutDir)
 copy /Y "$(ProjectDir)..\..\driver\binary_release\windows_driver\udriver\udriver.dll" $(OutDir)
 xcopy /E /I /Y "$(ProjectDir)..\..\mx_accl\include" $(OutDir)include
-copy /Y "$(ProjectDir)..\..\driver\binary_release\windows_driver\udriver\include\memx\memx.h" $(OutDir)include\memx\  </Command>
+copy /Y "$(ProjectDir)..\..\driver\binary_release\windows_driver\udriver\include\memx\memx.h" $(OutDir)include\memx\  
+exit 0</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
