@@ -6,7 +6,7 @@
 
 
 <!-- Badges for quick project insights -->
-[![MemryX SDK](https://img.shields.io/badge/MemryX%20SDK-1.2-brightgreen)](https://developer.memryx.com)
+[![MemryX SDK](https://img.shields.io/badge/MemryX%20SDK-2.0-brightgreen)](https://developer.memryx.com)
 [![C++](https://img.shields.io/badge/C++-17-blue)](https://en.cppreference.com)
 
 
