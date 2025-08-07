@@ -115,61 +115,20 @@ class ContextClient
     ~ContextClient();
 
     void ping_all_queues();
+    void increment_inflight_frames();
+    void decrement_inflight_frames();
 
     std::shared_mutex sm; // [s]hared [m]utex for thread-safe access this
     std::condition_variable_any cv_sm;
 
-    std::atomic_int ref_count;
+    std::mutex m_inflight_frames;
+    std::condition_variable cv_inflight_frames;
+    
+    uint64_t num_inflight_frames;
 };
 
 
-
-// ifmap_queue is a BlockyQueue derviative that pushes
-// the given ctx_id to the IomapItem->ContextClient->driver_ctx_fifo
-class CtxBlockyQueue : public BlockyQueue<IomapItem*>
-{
-  public:
-    explicit CtxBlockyQueue() : BlockyQueue<IomapItem*>() {}
-
-    void pop_with_ctxpush(IomapItem* &ret, uint8_t ctx_id)
-    {
-        std::unique_lock<std::mutex> lock(this->m);
-        s_not_empty.wait(lock, [this] { return (!(this->q.empty())) || this->kill; });
-        if(UNLIKELY(this->q.empty())) { return; } // return if kill was true
-
-        // pop
-        ret = this->q.front();
-        // push the ctx_id to the driver's fifo
-        ret->dest_client->driver_ctx_fifo->push(ctx_id);
-        this->q.pop_front();
-
-        // wake up anyone waiting on full
-        this->s_not_full.notify_one();
-
-        // clear lock
-        lock.unlock();
-    }
-
-    bool pop_timeout_with_ctxpush(IomapItem* &ret, unsigned int timeout_ms, uint8_t ctx_id)
-    {
-        std::unique_lock<std::mutex> lock(this->m);
-        bool got_data = this->s_not_empty.wait_for(
-                            lock,
-                            std::chrono::milliseconds(timeout_ms),
-                            [this] { return (!(this->q.empty())) || this->kill; }
-                        );
-        if(UNLIKELY(!got_data)) { return false; }
-        if(UNLIKELY(this->q.empty())) { return false; }
-        ret = this->q.front();
-        ret->dest_client->driver_ctx_fifo->push(ctx_id);
-        this->q.pop_front();
-        this->s_not_full.notify_one();
-        lock.unlock();
-        return true;
-    }
-};
-
-
+class CtxBlockyQueue; // forward declaration
 class ModelContext
 {
   public:
@@ -194,10 +153,16 @@ class ModelContext
     // -------------------------
     // stores mapping of ID -> ContextClient
     std::unordered_map<uint32_t, ContextClient*> clients;
+    std::unordered_set<ContextClient*> clients_set;
     std::mutex client_table_lock;
 
     // creates a new client entry (including ofmap queues)
     ContextClient* add_client(uint32_t id, std::atomic_bool* alive_flag);
+
+    bool is_client_existed(ContextClient* client);
+    bool is_client_list_empty();
+
+    std::vector<int> get_client_ids();
 
     // fetch existing clientmeta ptr
     ContextClient* get_meta(uint32_t id);
@@ -215,9 +180,67 @@ class ModelContext
     IomapItem**                  ifmap_buffers;
     BlockyQueue<IomapItem*>*     ifmap_freelist;
     CtxBlockyQueue*              ifmap_queue;
-
 };
 
+// ifmap_queue is a BlockyQueue derviative that pushes
+// the given ctx_id to the IomapItem->ContextClient->driver_ctx_fifo
+class CtxBlockyQueue : public BlockyQueue<IomapItem*>
+{
+  public:
+    explicit CtxBlockyQueue(ModelContext* mctx) : BlockyQueue<IomapItem*>(), mctx_(mctx) {}
+
+    // returns a pair of bools: {is_timeout, client_existed}
+    std::pair<bool, bool> pop_timeout_with_ctxpush(IomapItem* &ret, unsigned int timeout_ms, uint8_t ctx_id)
+    {
+        std::unique_lock<std::mutex> lock(this->m);
+        bool got_data;
+
+        if(timeout_ms > 0){
+            got_data = this->s_not_empty.wait_for(
+                            lock,
+                            std::chrono::milliseconds(timeout_ms),
+                            [this] { return (!(this->q.empty())) || this->kill; }
+                        );
+        } else {
+            this->s_not_empty.wait(
+                 lock,
+                 [this] { return (!(this->q.empty())) || this->kill; }
+             );
+            got_data = !(this->kill); // if we got here, it means we got data
+        }
+
+        // initialize status
+        bool is_timeout = true;
+        bool client_existed = !(mctx_->is_client_list_empty());
+
+        if(UNLIKELY(!got_data)) { return {is_timeout, client_existed}; }
+        if(UNLIKELY(this->q.empty())) { return {is_timeout, client_existed}; }
+
+        ret = this->q.front();
+        this->q.pop_front();
+        this->s_not_full.notify_one();
+        
+        if (mctx_->is_client_existed(ret->dest_client) == false) {
+            // client no longer exists
+            is_timeout = false;
+            client_existed = false;
+            lock.unlock();
+            return {is_timeout, client_existed};
+        }
+
+        // push the ctx_id to the driver's fifo
+        ret->dest_client->driver_ctx_fifo->push(ctx_id);
+        lock.unlock();
+
+        // successfully popped data
+        is_timeout = false;
+        client_existed = true;
+        return {is_timeout, client_existed};
+    }
+
+    private:
+        ModelContext* mctx_;
+};
 
 // this model's Port information
 struct port_infos_t {

@@ -80,94 +80,22 @@ struct ExecutorTask {
 // - NOTE: you do need to add/remove I/O thread pairs if the incoming DFP has a
 //         different number of sub-Models, though!
 
-class ModelThreadPair
-{
-  public:
-    ModelThreadPair();
-    ~ModelThreadPair();
-
-    // assigns given DFP
-    // start running for N frames / M time
-    bool assign_and_start(ExecutorTask* task, int model_id_);
-
-    // halt while draining frame pipeline
-    void halt();
-
-    // forcibly halt; do not drain pipeline
-    void force_halt();
-
-    // current DFP ptr
-    DFPContext* d;
-
-    // publicly accessible "interrupt flags" that
-    // the main DFPExecutor thread waits on
-
-    // check out our synchronization mechanism here:
-    // https://link.excalidraw.com/l/55syurcaaU1/A46Bz3AK1dp
-    std::condition_variable s_done;
-    std::condition_variable s_loop_ready;
-    std::condition_variable s_enter_out;
-    std::condition_variable s_enter_in;
-    std::atomic_bool a_input_done;
-    bool enter_out_flag = false;
-    bool enter_in_flag = false;
-    int num_loop_ready = 0;
-
-    std::mutex m_flags;
-    std::mutex m_ready;
-    std::mutex m_enter_in;
-    std::mutex m_enter_out;
-
-    uint8_t driver_ctx_id;
-
-
-    std::mutex* m_dumpster_lock;
-    uint8_t* dumpster;
-
-  private:
-    // stored internally
-    int model_id;
-    uint64_t frame_limit;
-    uint32_t time_limit;
-    bool stop_on_empty;
-
-
-    // targets of threads
-    void input_loop();
-    void output_loop();
-
-
-
-    // 3'b000=run, 3'b010=halt, 3'b011=force-halt, 3'b101=terminate
-    std::condition_variable s_stop;
-    enum StopFlags : char {
-        SF_RUN = 0,
-        SF_HALT = 2,
-        SF_FORCE_HALT = 3,
-        SF_TERMINATE = 5
-    };
-    std::atomic<StopFlags> a_stop_in;
-    std::atomic<StopFlags> a_stop_out;
-
-    std::thread* ithread;
-    std::thread* othread;
-
-    BQExtFlag<ContextClient*>* inflights;
-
-};
-
+class ModelThreadPair; // forward declare
 
 class DFPExecutor
 {
 
   public:
-    DFPExecutor(uint8_t device_id_, const std::vector<device_info_t>* devinfos_);
+    DFPExecutor(uint8_t device_id_, const std::vector<device_info_t>* devinfos_, const BlockyQueue<ExecutorTask*> *my_exec_queue_);
     ~DFPExecutor();
+
+    // so that ModelThreadPair can touch DFPExecutor's privates
+    friend class ModelThreadPair;
 
     bool run_dfp(ExecutorTask* task);
 
     // expand/contract # threads depending on # submodels
-    void add_iothread_pair(int submodel_id, std::mutex* m_dumpster_lock, uint8_t* dumpster);
+    void add_iothread_pair(int submodel_id, std::mutex* m_dumpster_lock, uint8_t*& dumpster);
     void remove_iothread_pair(int submodel_id);
 
     // download and start stream to real hardware
@@ -203,9 +131,14 @@ class DFPExecutor
     bool set_power_mode(MX::Types::MxFrequencyOption fop);
 
   private:
+    const BlockyQueue<ExecutorTask*> *my_exec_queue;
+
     bool open_device(DFPContext* d);
     uint8_t device_id;
     const std::vector<device_info_t>* devinfos;
+
+    int n_models; // used later!
+    bool has_any_threadpair_hit_frame_limit() const;
 
     uint8_t num_chips; // number of chips on this device (set in open_device())
 
@@ -272,6 +205,86 @@ class DFPExecutor
     mutable std::mutex m_driver_ctx_set;
 };
 
+
+
+
+class ModelThreadPair
+{
+  public:
+    ModelThreadPair(const DFPExecutor *my_dfpexec_);
+    ~ModelThreadPair();
+
+    friend class DFPExecutor;
+
+    // assigns given DFP
+    // start running for N frames / M time
+    bool assign_and_start(ExecutorTask* task, int model_id_);
+
+    // halt while draining frame pipeline
+    void halt();
+
+    // forcibly halt; do not drain pipeline
+    void force_halt();
+
+    // current DFP ptr
+    DFPContext* d;
+
+    // publicly accessible "interrupt flags" that
+    // the main DFPExecutor thread waits on
+
+    // check out our synchronization mechanism here:
+    // https://link.excalidraw.com/l/55syurcaaU1/A46Bz3AK1dp
+    std::condition_variable s_done;
+    std::condition_variable s_loop_ready;
+    std::condition_variable s_enter_out;
+    std::condition_variable s_enter_in;
+    std::atomic_bool a_input_done;
+    bool enter_out_flag = false;
+    bool enter_in_flag = false;
+    int num_loop_ready = 0;
+
+    std::mutex m_flags;
+    std::mutex m_ready;
+    std::mutex m_enter_in;
+    std::mutex m_enter_out;
+
+    uint8_t driver_ctx_id;
+
+
+    std::mutex* m_dumpster_lock;
+    uint8_t** dumpster_ptr;
+
+  private:
+    // stored internally
+    int model_id;
+    uint64_t frame_limit;
+    uint32_t time_limit;
+    bool stop_on_empty;
+
+
+    // targets of threads
+    void input_loop();
+    void output_loop();
+
+    const DFPExecutor *my_dfpexec;
+
+    // 3'b000=run, 3'b010=halt, 3'b011=force-halt, 3'b101=terminate
+    std::condition_variable s_stop;
+    enum StopFlags : char {
+        SF_RUN = 0,
+        SF_HALT = 2,
+        SF_FORCE_HALT = 3,
+        SF_TERMINATE = 5
+    };
+    std::atomic<StopFlags> a_stop_in;
+    std::atomic<StopFlags> a_stop_out;
+
+    std::thread* ithread;
+    std::thread* othread;
+
+    BQExtFlag<ContextClient*>* inflights;
+
+};
 
 
 

@@ -138,7 +138,7 @@ class BlockyQueue
         return true;
     }
 
-    unsigned int size()
+    unsigned int size() const
     {
         std::lock_guard<std::mutex> lock(m);
         return q.size();
@@ -234,6 +234,11 @@ class BQExtFlag
     bool drain_pop(T &ret)
     {
         std::unique_lock<std::mutex> lock(m);
+
+        s_not_empty.wait(lock, [this] { return ( (ext_flag->load(std::memory_order_consume) == val_to_wait_for) || kill); });
+        TSAN_ACQUIRE(ext_flag);
+
+
         if(q.empty()) {
             lock.unlock();
             return false; // queue was empty

@@ -1181,23 +1181,27 @@ cleanup:
 
     // decrement the client_ref_count of my dfp (if present),
     // and remove the client from the DFPContext
-    if(meta->my_dfp_context != nullptr) {
-        // remove the client from the DFPContext
-        meta->my_dfp_context->client_ref_count--;
-        if(meta->my_dfp_context->get_mctx(meta->submodel_id)->remove_client(my_client_id)) {
-            spdlog::debug("[CTRL] client {} removed from DFPContext with hash {}, submodel_id {}", my_client_id,
-                         MX::sha512::to_base64(meta->my_dfp_context->hash), meta->submodel_id);
+    {
+        // dfp context might be already deleted in scheduler thread
+        if(meta->my_dfp_context != nullptr) {
+            
+            // remove the client from the DFPContext
+            meta->my_dfp_context->client_ref_count--;
+            if(meta->my_dfp_context->get_mctx(meta->submodel_id)->remove_client(my_client_id)) {
+                spdlog::debug("[CTRL] client {} removed from DFPContext with hash {}, submodel_id {}", my_client_id,
+                             MX::sha512::to_base64(meta->my_dfp_context->hash), meta->submodel_id);
+            }
+            else {
+                spdlog::error("[CTRL] failed to remove client from DFPContext with hash {}, submodel_id {}",
+                              MX::sha512::to_base64(meta->my_dfp_context->hash), meta->submodel_id);
+            }
+    
+            // the scheduler thread will take care of removing the DFPContext if it is no longer needed
+    
         }
         else {
-            spdlog::error("[CTRL] failed to remove client from DFPContext with hash {}, submodel_id {}",
-                          MX::sha512::to_base64(meta->my_dfp_context->hash), meta->submodel_id);
+            spdlog::warn("[CTRL] client {} has no DFPContext", my_client_id);
         }
-
-        // the scheduler thread will take care of removing the DFPContext if it is no longer needed
-
-    }
-    else {
-        spdlog::warn("[CTRL] client {} has no DFPContext", my_client_id);
     }
 
     // close ifmap ofmap sockets (if present)
@@ -1360,9 +1364,6 @@ void Server::ifmap_session(MX::RPC::Socket* s, ClientMeta* meta)
         }
 
         // push the item to the ModelContext's ifmap_queue
-        my_client_context->ref_count++;
-        TSAN_ACQUIRE(&item->dest_client->ref_count);
-        TSAN_RELEASE(&item->dest_client->ref_count);
         my_model_context->ifmap_queue->push(item);
 
         item = nullptr;
@@ -1591,7 +1592,7 @@ void Server::executor_thread(uint8_t device_id_)
 
     DFPContext* dfp_ctx = nullptr;
 
-    DFPExecutor my_exec(device_id_, &devinfo_table);
+    DFPExecutor my_exec(device_id_, &devinfo_table, &(executor_queues[device_id_]));
     {
         std::unique_lock<std::shared_mutex> lock(m_executor_table);
         all_dfp_executors[device_id_] = &my_exec;
@@ -1632,7 +1633,6 @@ void Server::executor_thread(uint8_t device_id_)
             }
 
             // run the task in the executor
-            spdlog::debug("[EXECUTOR {}] Running task on device {}", device_id_, device_id_);
             my_exec.run_dfp(task);
 
             // push the task back to the scheduler queue

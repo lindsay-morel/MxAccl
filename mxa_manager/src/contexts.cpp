@@ -56,15 +56,26 @@ ContextClient::ContextClient(uint32_t id_, uint32_t obuffer_size_, uint32_t num_
     }
 
     obuffer_size = obuffer_size_ * allowed_driver_ctxs.size();
-    ref_count = 0;
+    num_inflight_frames = 0;
+}
+
+
+void ContextClient::increment_inflight_frames() {
+    std::unique_lock<std::mutex> lock(m_inflight_frames);
+    num_inflight_frames++;
+}
+
+void ContextClient::decrement_inflight_frames() {
+    std::unique_lock<std::mutex> lock(m_inflight_frames);
+    num_inflight_frames--;
 }
 
 ContextClient::~ContextClient()
 {
-    while(ref_count.load() > 0) {
-        TSAN_ACQUIRE(&ref_count);
-        std::this_thread::yield();
-    }
+    // wait until all inflight frames in dfp executor are done
+    std::unique_lock<std::mutex> lock(m_inflight_frames);
+    cv_inflight_frames.wait(lock, [this] { return num_inflight_frames == 0; });
+    spdlog::debug("[ContextClient Destructor] client id: {}, Begin to delete", id);
 
     // okay we're ready to delete everything
     if(ofmap_buffers != nullptr) {
@@ -158,7 +169,7 @@ ModelContext::ModelContext(uint32_t ibuffer_size_, uint32_t obuffer_size_, uint3
 
     ifmap_buffers  = new IomapItem*[ibuffer_size];
     ifmap_freelist = new BlockyQueue<IomapItem*>(ibuffer_size);
-    ifmap_queue    = new CtxBlockyQueue();
+    ifmap_queue    = new CtxBlockyQueue(this);
 
     for(uint32_t i = 0; i < ibuffer_size; i++) {
         ifmap_buffers[i] = new IomapItem(num_ifmaps, ifmap_sizes);
@@ -168,13 +179,20 @@ ModelContext::ModelContext(uint32_t ibuffer_size_, uint32_t obuffer_size_, uint3
 }
 
 
+std::vector<int> ModelContext::get_client_ids() {
+    std::lock_guard<std::mutex> lock(client_table_lock);
+    std::vector<int> client_ids;
+    for(auto it = clients.begin(); it != clients.end(); ++it) {
+        client_ids.push_back(it->first);
+    }
+    return client_ids;
+}
+
 ModelContext::~ModelContext()
 {
     // remove all clients, if any are in the client table
-    for(auto it = clients.begin(); it != clients.end(); ++it) {
-        delete it->second;
-        it->second = nullptr;
-    }
+    for(int id : this->get_client_ids())
+        remove_client(id);
 
     if(ifmap_buffers != nullptr) {
         for(uint32_t i = 0; i < ibuffer_size; i++) {
@@ -208,10 +226,15 @@ ContextClient* ModelContext::add_client(uint32_t id, std::atomic_bool* alive_fla
         std::lock_guard<std::mutex> lock(client_table_lock);
         clients[id] = new ContextClient(id, obuffer_size, num_ofmaps, ofmap_sizes, allowed_driver_ctxs, alive_flag);
         spdlog::debug("[ModelContext] Client {} added to ModelContext", id);
+        clients_set.insert(clients[id]);
         return clients[id];
     }
 }
 
+bool ModelContext::is_client_existed(ContextClient* client) {
+    std::lock_guard<std::mutex> lock(client_table_lock);
+    return clients_set.count(client) > 0;
+}
 
 ContextClient* ModelContext::get_meta(uint32_t id)
 {
@@ -242,12 +265,18 @@ bool ModelContext::remove_client(uint32_t id)
             return false;
         }
         else {
+            clients_set.erase(clients[id]);
             delete clients[id];
             return (bool) clients.erase(id);
         }
     }
 }
 
+bool ModelContext::is_client_list_empty()
+{
+    std::lock_guard<std::mutex> lock(client_table_lock);
+    return clients_set.empty();
+}
 
 void ModelContext::print_clients()
 {
