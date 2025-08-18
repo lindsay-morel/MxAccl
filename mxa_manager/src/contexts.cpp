@@ -56,27 +56,27 @@ ContextClient::ContextClient(uint32_t id_, uint32_t obuffer_size_, uint32_t num_
     }
 
     obuffer_size = obuffer_size_ * allowed_driver_ctxs.size();
-    num_inflight_frames = 0;
+    pending_frame_cnt = 0;
 }
 
-
-void ContextClient::increment_inflight_frames() {
-    std::unique_lock<std::mutex> lock(m_inflight_frames);
-    num_inflight_frames++;
+void ContextClient::increment_pending_frames() {
+    std::unique_lock<std::mutex> lock(pending_frame_lock);
+    pending_frame_cnt++;
+    // spdlog::debug("[ContextClient] increment client {}. Current pending frame count: {}", id, pending_frame_cnt);
 }
 
-void ContextClient::decrement_inflight_frames() {
-    std::unique_lock<std::mutex> lock(m_inflight_frames);
-    num_inflight_frames--;
+void ContextClient::decrement_pending_frames() {
+    std::unique_lock<std::mutex> lock(pending_frame_lock);
+    pending_frame_cnt--;
+    // spdlog::debug("[ContextClient] decrement client {}. Current pending frame count: {}", id, pending_frame_cnt);
+
+    if (pending_frame_cnt == 0) {
+        pending_frame_cv.notify_all();
+    }
 }
 
 ContextClient::~ContextClient()
 {
-    // wait until all inflight frames in dfp executor are done
-    std::unique_lock<std::mutex> lock(m_inflight_frames);
-    cv_inflight_frames.wait(lock, [this] { return num_inflight_frames == 0; });
-    spdlog::debug("[ContextClient Destructor] client id: {}, Begin to delete", id);
-
     // okay we're ready to delete everything
     if(ofmap_buffers != nullptr) {
         for(uint32_t i = 0; i < obuffer_size ; i++) {
@@ -110,7 +110,7 @@ ContextClient::~ContextClient()
     delete ofmap_freelists;
     ofmap_freelists = nullptr;
 
-    spdlog::warn("[ContextClient] Client {} destroyed", id);
+    spdlog::info("[ContextClient] Client {} destroyed", id);
 }
 
 void ContextClient::ping_all_queues()

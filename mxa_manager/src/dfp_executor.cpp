@@ -886,7 +886,7 @@ void ModelThreadPair::input_loop()
 
         ModelContext* mctx = d->get_mctx(model_id);
 
-        IomapItem* item;
+        IomapItem* item = nullptr;
         port_infos_t* p = d->info->port_info[model_id];
 
         memx_status status = MEMX_STATUS_OTHERS;
@@ -909,27 +909,31 @@ void ModelThreadPair::input_loop()
                     }
                 }
 
-                // 1000ms to prevent infinite hangs
-                // worst case (<1 FPS client), this just triggers an unnecessary DFP swap & reschedule
-                auto [is_timeout, client_existed] = mctx->ifmap_queue->pop_timeout_with_ctxpush(item, 1000, driver_ctx_id);
-                if (client_existed == false && is_timeout == false)  {
-                    // if hit here, it means the client sent some frames in ifmap queue before being deleted.
-                    mctx->ifmap_freelist->push(item); // return this IomapItem to the ifmap freelist
-                    spdlog::debug("ModelThreadPair {}-{}: input loop skipped client deleted item", driver_ctx_id, model_id);
-                    continue;
-                }
-                else if (is_timeout) {
-                    if(client_existed == false){
-                        // no more valid clients, break
-                        spdlog::debug("ModelThreadPair {}-{}: input loop timed out with no valid clients", driver_ctx_id, model_id);
+                if(mctx->ifmap_queue->pop_timeout_with_ctxpush(item, 1000, driver_ctx_id) == false) {
+
+                    if (item == nullptr) {
+                        // if item is nullptr, it means the queue is empty
+                        // This can happen when client only connect_dfp but never send any frames to manager
+                        spdlog::debug("ModelThreadPair {}-{}: input loop timed out because queue is empty", driver_ctx_id, model_id);
                         break;
-                    } else if(my_dfpexec->has_any_threadpair_hit_frame_limit()) {
+                    }
+
+                    if (mctx->is_client_existed(item->dest_client) == false) {
+                        // client no longer exists
+                        spdlog::debug("ModelThreadPair {}-{}: input loop timed out because client no longer exists", driver_ctx_id, model_id);
+                        break;
+                    }
+
+                    // This break condition helps with multi-model DFPs where not all frames go through both
+                    // models. Like Mediapipe Hands, Virtual Painter, and Face/Emotion. The issue
+                    // was one of the ModelThreadPairs would exit while the other kept going.
+                    if(my_dfpexec->has_any_threadpair_hit_frame_limit()) {
                         // if we hit the frame limit, break
                         spdlog::debug("ModelThreadPair {}-{}: input loop timed out WHILE another hit the frame limit", driver_ctx_id, model_id);
                         break;
                     }
-
-                    spdlog::debug("ModelThreadPair {}-{}: input loop timed out BUT another thread is still running, so we'll try again", driver_ctx_id, model_id);
+                    
+                    spdlog::debug("ModelThreadPair {}-{}: input loop timed out, we'll try again. Either because another thread is still running or no pending DFPs in my_dfpexec's queue", driver_ctx_id, model_id);
                     continue;
                 }
 
@@ -943,12 +947,12 @@ void ModelThreadPair::input_loop()
                 if(UNLIKELY(memx_status_error(status))) {
                     // error, so break
                     spdlog::critical("ModelThreadPair {}-{}: memx_stream_ifmap() failed with error {}", driver_ctx_id, model_id, (uint32_t) status);
+                    item->dest_client->decrement_pending_frames();
                     break;
                 }
 
                 // push this frame's destination to the inflight tracker
                 inflights->push(item->dest_client);
-                item->dest_client->increment_inflight_frames();
 
                 // return this IomapItem to the ifmap freelist
                 mctx->ifmap_freelist->push(item);
@@ -989,14 +993,7 @@ void ModelThreadPair::input_loop()
                     }
 
                     // pop with timeout (and force the timeout even if other thread pairs are still running)
-                    auto [is_timeout, client_existed] = mctx->ifmap_queue->pop_timeout_with_ctxpush(item, time_limit, driver_ctx_id);
-                    if (client_existed == false)  {
-                        // if hit here, it means the client sent some frames in ifmap queue before being deleted.
-                        mctx->ifmap_freelist->push(item); // return this IomapItem to the ifmap freelist
-                        spdlog::debug("ModelThreadPair {}-{}: input loop skipped client deleted item", driver_ctx_id, model_id);
-                        continue;
-                    }
-                    else if (is_timeout) {
+                    if(mctx->ifmap_queue->pop_timeout_with_ctxpush(item, time_limit, driver_ctx_id) == false) {
                         spdlog::debug("ModelThreadPair {}-{}: input loop timed out", driver_ctx_id, model_id);
                         break;
                     }
@@ -1011,12 +1008,12 @@ void ModelThreadPair::input_loop()
                     if(UNLIKELY(memx_status_error(status))) {
                         // error, so break
                         spdlog::critical("ModelThreadPair {}-{}: memx_stream_ifmap() failed with error {}", driver_ctx_id, model_id, (uint32_t) status);
+                        item->dest_client->decrement_pending_frames();
                         break;
                     }
 
                     // push this frame's destination to the inflight tracker
                     inflights->push(item->dest_client);
-                    item->dest_client->increment_inflight_frames();
 
                     // return this IomapItem to the ifmap freelist
                     mctx->ifmap_freelist->push(item);
@@ -1037,14 +1034,7 @@ void ModelThreadPair::input_loop()
                     }
 
                     // pop with timeout
-                    auto [is_timeout, client_existed] = mctx->ifmap_queue->pop_timeout_with_ctxpush(item, time_limit, driver_ctx_id);
-                    if (client_existed == false)  {
-                        // if hit here, it means the client sent some frames in ifmap queue before being deleted.
-                        mctx->ifmap_freelist->push(item); // return this IomapItem to the ifmap freelist
-                        spdlog::debug("ModelThreadPair {}-{}: input loop skipped client deleted item", driver_ctx_id, model_id);
-                        continue;
-                    } 
-                    else if (is_timeout) {
+                    if(mctx->ifmap_queue->pop_timeout_with_ctxpush(item, time_limit, driver_ctx_id) == false) {
                         spdlog::debug("ModelThreadPair {}-{}: input loop timed out", driver_ctx_id, model_id);
                         break;
                     }
@@ -1059,12 +1049,12 @@ void ModelThreadPair::input_loop()
                     if(UNLIKELY(memx_status_error(status))) {
                         // error, so break
                         spdlog::critical("ModelThreadPair {}-{}: memx_stream_ifmap() failed with error {}", driver_ctx_id, model_id, (uint32_t) status);
+                        item->dest_client->decrement_pending_frames();
                         break;
                     }
 
                     // push this frame's destination to the inflight tracker
                     inflights->push(item->dest_client);
-                    item->dest_client->increment_inflight_frames();
 
                     // return this IomapItem to the ifmap freelist
                     mctx->ifmap_freelist->push(item);
@@ -1177,13 +1167,11 @@ void ModelThreadPair::output_loop()
 
             // pop the next destination from the inflight tracker
             if(inflights->pop(dest_client)) {
-                dest_client->decrement_inflight_frames();
                 //spdlog::debug("ModelThreadPair {} O: popped output queue pair from inflights", model_id);
 
                 // get a free destination from the freelist
                 if(dest_client->ofmap_freelists->at(driver_ctx_id)->pop(dst) == false) {
                     inflights->push(dest_client); // push it back to inflights
-                    dest_client->increment_inflight_frames();
                     
                     // no free destination, so break
                     spdlog::debug("ModelThreadPair {}-{} O: output loop exited before getting a free destination", driver_ctx_id, model_id);
@@ -1210,10 +1198,14 @@ void ModelThreadPair::output_loop()
 
                 // push the dst to the output queue
                 if(dest_client->ofmap_queues->at(driver_ctx_id)->push_timeout(dst, 500) == false) {
+                    dest_client->decrement_pending_frames();
+
                     // timeout -- break this loop
                     spdlog::error("ModelThreadPair {}-{} O: output loop timed out on output queue push", driver_ctx_id, model_id);
                     break;
                 }
+
+                dest_client->decrement_pending_frames();
             }
             else {
                 // no more inflight queues, so break
@@ -1226,7 +1218,6 @@ void ModelThreadPair::output_loop()
         int drain_count = 0;
         while(inflights->drain_pop(dest_client)) {
             spdlog::debug("ModelThreadPair {}-{} O: draining client id: {}", driver_ctx_id, model_id, dest_client->id);
-            dest_client->decrement_inflight_frames();
 
             // get a free destination from the freelist
             if(dest_client->ofmap_freelists->at(driver_ctx_id)->pop(dst) == false) {
@@ -1247,6 +1238,7 @@ void ModelThreadPair::output_loop()
                     break;
                 }
                 drain_count++;
+                dest_client->decrement_pending_frames();
                 dumplock.unlock();
             }
             else {
@@ -1269,8 +1261,18 @@ void ModelThreadPair::output_loop()
                 if(dest_client->ofmap_queues->at(driver_ctx_id)->push_timeout(dst, 500) == false) {
                     spdlog::warn("ModelThreadPair {}-{} O: drain oqueue push timed out -- dropping data", driver_ctx_id, model_id);
                 }
+
+                dest_client->decrement_pending_frames();
             }
         }
+
+        // ***********************************************************
+        // NOTE: 
+        // After this line, you should not access dest_client anymore,
+        // because the client may already be removed once client's program 
+        // disconnect and client->client_pending_frame_cnt down to zero!!
+        // ***********************************************************
+        
         spdlog::debug("ModelThreadPair {}-{} O: drained {} items from inflights queue", driver_ctx_id, model_id, drain_count);
         total_frames += drain_count;
 
@@ -1282,14 +1284,6 @@ void ModelThreadPair::output_loop()
         enter_in_flag = false;
 
         spdlog::debug("ModelThreadPair {}-{}: output loop make sure we already officially entered the input loop", driver_ctx_id, model_id);
-
-        // finished processing all frames in inflight
-        if (inflights->size() == 0 ) {
-            // In the very beginning, user app only connects DFP but not yet send any frames to manager.
-            // In this case, dest_client remains a nullptr, so we need to check
-            if (dest_client)
-                dest_client->cv_inflight_frames.notify_all();
-        }
 
         {
             // notify main thread that output is done

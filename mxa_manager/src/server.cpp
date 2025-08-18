@@ -1159,9 +1159,9 @@ cleanup:
         meta->my_client_context->ping_all_queues();
     }
 
-    // wait for ifmap and ofmap sessions to finish, sleeping
-    // on condition variables for ifmap_session / ofmap_session
-    // to become true
+    // Wait for the ifmap session to finish.
+    // ifmap_socket is nullptr if init_connection failed.
+    // Otherwise, block until ifmap_session_finish is true.
     {
         std::unique_lock<std::mutex> zlock(meta->ifmap_session_lock);
         spdlog::debug("[CTRL] waiting for ifmap session to finish for client {}", my_client_id);
@@ -1170,6 +1170,10 @@ cleanup:
         });
         zlock.unlock();
     }
+
+    // Wait for the ofmap session to finish.
+    // ofmap_socket is nullptr if init_connection failed.
+    // Otherwise, block until ofmap_session_finish is true.
     {
         std::unique_lock<std::mutex> zlock(meta->ofmap_session_lock);
         spdlog::debug("[CTRL] waiting for ofmap session to finish for client {}", my_client_id);
@@ -1179,11 +1183,28 @@ cleanup:
         zlock.unlock();
     }
 
+
+    // Wait for pending frames finish processing, so that we can safely remove the client
+    //
+    // About client remove synchronization strategy, pls refer to this issue comment:
+    // https://github.com/memryx/MX_API/pull/239#discussion_r2271895396 
+    {
+        ContextClient* my_client = meta->my_client_context;
+        if(my_client != nullptr){
+            std::unique_lock<std::mutex> lock(my_client->pending_frame_lock);
+            my_client->pending_frame_cv.wait(lock, [&my_client]() {
+                return my_client->pending_frame_cnt == 0;
+            });
+        }
+    }
+
     // decrement the client_ref_count of my dfp (if present),
     // and remove the client from the DFPContext
     {
         // dfp context might be already deleted in scheduler thread
         if(meta->my_dfp_context != nullptr) {
+            
+            spdlog::debug("[CTRL] attempt to remove client {}", my_client_id);
             
             // remove the client from the DFPContext
             meta->my_dfp_context->client_ref_count--;
@@ -1200,7 +1221,8 @@ cleanup:
     
         }
         else {
-            spdlog::warn("[CTRL] client {} has no DFPContext", my_client_id);
+            // probably in Local Mode
+            spdlog::debug("[CTRL] client {} has no DFPContext", my_client_id);
         }
     }
 
@@ -1364,6 +1386,7 @@ void Server::ifmap_session(MX::RPC::Socket* s, ClientMeta* meta)
         }
 
         // push the item to the ModelContext's ifmap_queue
+        my_client_context->increment_pending_frames();
         my_model_context->ifmap_queue->push(item);
 
         item = nullptr;
@@ -1502,7 +1525,7 @@ void Server::ofmap_session(MX::RPC::Socket* s, ClientMeta* meta)
         uint8_t next_driver_ctx = 0xFF;
         if(my_client_context->driver_ctx_fifo->pop(next_driver_ctx) == false) {
             // if we can't pop, then we are done with this session
-            spdlog::warn("[OFMAP] driver_ctx_fifo pop was killed, exiting ofmap session for client {}", meta->id);
+            spdlog::info("[OFMAP] driver_ctx_fifo pop was killed, exiting ofmap session for client {}", meta->id);
             if(meta->alive.load(std::memory_order_consume) == true) {
                 TSAN_ACQUIRE(&meta->alive);
                 spdlog::error("[OFMAP] we should not have reached this point with alive == true");

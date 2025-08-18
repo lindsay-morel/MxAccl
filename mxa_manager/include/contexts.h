@@ -115,16 +115,17 @@ class ContextClient
     ~ContextClient();
 
     void ping_all_queues();
-    void increment_inflight_frames();
-    void decrement_inflight_frames();
+    void increment_pending_frames();
+    void decrement_pending_frames();
 
     std::shared_mutex sm; // [s]hared [m]utex for thread-safe access this
     std::condition_variable_any cv_sm;
 
-    std::mutex m_inflight_frames;
-    std::condition_variable cv_inflight_frames;
-    
-    uint64_t num_inflight_frames;
+    // Frame is considered "in processing" from the moment it is pushed to the ifmap queue
+    // until it completes processing in the output loop.
+    int pending_frame_cnt;
+    std::mutex       pending_frame_lock;
+    std::condition_variable pending_frame_cv;
 };
 
 
@@ -184,13 +185,42 @@ class ModelContext
 
 // ifmap_queue is a BlockyQueue derviative that pushes
 // the given ctx_id to the IomapItem->ContextClient->driver_ctx_fifo
+
 class CtxBlockyQueue : public BlockyQueue<IomapItem*>
 {
   public:
     explicit CtxBlockyQueue(ModelContext* mctx) : BlockyQueue<IomapItem*>(), mctx_(mctx) {}
 
+    // bool pop_with_ctxpush(IomapItem* &ret, uint8_t ctx_id)
+    // {
+    //     std::unique_lock<std::mutex> lock(this->m);
+    //     s_not_empty.wait(lock, [this] { return (!(this->q.empty())) || this->kill; });
+    //     if(UNLIKELY(this->q.empty())) { return; } // return if kill was true
+
+    //     // pop
+    //     ret = this->q.front();
+    //     this->q.pop_front();
+        
+    //     // wake up anyone waiting on full
+    //     this->s_not_full.notify_one();
+        
+    //     if (mctx_->is_client_existed(ret->dest_client) == false) {
+    //         // client no longer exists
+    //         lock.unlock();
+    //         return false;
+    //     }
+        
+    //     // push the ctx_id to the driver's fifo
+    //     ret->dest_client->driver_ctx_fifo->push(ctx_id);
+
+    //     // clear lock
+    //     lock.unlock();
+
+    //     return true;
+    // }
+
     // returns a pair of bools: {is_timeout, client_existed}
-    std::pair<bool, bool> pop_timeout_with_ctxpush(IomapItem* &ret, unsigned int timeout_ms, uint8_t ctx_id)
+    bool pop_timeout_with_ctxpush(IomapItem* &ret, unsigned int timeout_ms, uint8_t ctx_id)
     {
         std::unique_lock<std::mutex> lock(this->m);
         bool got_data;
@@ -209,33 +239,17 @@ class CtxBlockyQueue : public BlockyQueue<IomapItem*>
             got_data = !(this->kill); // if we got here, it means we got data
         }
 
-        // initialize status
-        bool is_timeout = true;
-        bool client_existed = !(mctx_->is_client_list_empty());
-
-        if(UNLIKELY(!got_data)) { return {is_timeout, client_existed}; }
-        if(UNLIKELY(this->q.empty())) { return {is_timeout, client_existed}; }
-
+        if(UNLIKELY(!got_data)) { return false; }
+        if(UNLIKELY(this->q.empty())) { return false; }
         ret = this->q.front();
         this->q.pop_front();
         this->s_not_full.notify_one();
         
-        if (mctx_->is_client_existed(ret->dest_client) == false) {
-            // client no longer exists
-            is_timeout = false;
-            client_existed = false;
-            lock.unlock();
-            return {is_timeout, client_existed};
-        }
-
         // push the ctx_id to the driver's fifo
         ret->dest_client->driver_ctx_fifo->push(ctx_id);
-        lock.unlock();
 
-        // successfully popped data
-        is_timeout = false;
-        client_existed = true;
-        return {is_timeout, client_existed};
+        lock.unlock();
+        return true;
     }
 
     private:

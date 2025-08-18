@@ -690,9 +690,6 @@ void MxModel::model_stop()
                     uint8_t* temp_blob = new uint8_t[out_featuremaps_[0][i]->get_formatted_size()];
                     status = (memx_status) ((int)status | memx_stream_ofmap( context_id, out_ports_[i], temp_blob, 100));
 
-                    if(memx_status_no_error(status)) {
-                        std::cerr << "Entered flushing" << std::endl;
-                    }
                     delete [] temp_blob;
                     temp_blob = nullptr;
                 }
@@ -786,9 +783,6 @@ void MxModel::model_manual_stop()
                 for (int i = 0; i < static_cast<int>(out_ports_.size()); ++i) {
                     uint8_t* temp_blob = new uint8_t[out_featuremaps_[0][i]->get_formatted_size()];
                     status = (memx_status) ((int)status | memx_stream_ofmap(context_id, out_ports_[i], temp_blob, 100));
-                    if(memx_status_no_error(status)) {
-                        std::cerr << "Entered flushing\r";
-                    }
                     delete [] temp_blob;
                 }
             }
