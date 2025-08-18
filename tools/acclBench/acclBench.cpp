@@ -360,16 +360,6 @@ void get_power_statistics()
         for (int i = 0; i < num_devices; ++i) {
             auto &window = power_windows[i];
             auto &sum    = power_window_sums[i];
-            int  recv    = recv_frame_count_vector[i];
-            size_t dq    = window.size();
-
-            // Freeze once we're within the last 'dq' frames
-            if (dq > 0
-                    && frame_count >= 2 * static_cast<int>(dq)
-                    && recv > frame_count - static_cast<int>(dq)) {
-                power_values[i] = sum / static_cast<float>(dq);
-                continue;
-            }
 
             // Sliding‐window update
             float p = avg[i];
@@ -435,16 +425,6 @@ void get_temp_statistics()
         for (int i = 0; i < num_devices; ++i) {
             auto &window = temp_windows[i];
             auto &sum    = temp_window_sums[i];
-            int  recv    = recv_frame_count_vector[i];
-            size_t dq    = window.size();
-
-            // Freeze once we're within the last 'dq' frames
-            if (dq > 0
-                    && frame_count >= 2 * static_cast<int>(dq)
-                    && recv > frame_count - static_cast<int>(dq)) {
-                temp_values[i] = sum / static_cast<float>(dq);
-                continue;
-            }
 
             // Sliding‐window update
             float p = avg[i];
