@@ -31,45 +31,33 @@ MxAccl::~MxAccl()
 
 void MxAccl::start(int model_id)
 {
-    int dfp_id = -1; // TODO: temp solution
-
-    if(dfp_id == -1 && model_id == -1) {
+    if(model_id == -1) {
         this->start_all();
     }
-    else if(dfp_id != -1 && model_id == -1) {
-        this->start_dfp(dfp_id);
-    }
-    else if(dfp_id != -1 && model_id != -1) {
+    else {
+        int dfp_id = 0; // TODO: temp solution
         this->start_model(dfp_id, model_id);
     }
 }
 
 void MxAccl::stop(int model_id)
-{
-    int dfp_id = -1; // TODO: temp solution
-
-    if(dfp_id == -1 && model_id == -1) {
+{   
+    if(model_id == -1) {
         this->stop_all();
     }
-    else if(dfp_id != -1 && model_id == -1) {
-        this->stop_dfp(dfp_id);
-    }
-    else if(dfp_id != -1 && model_id != -1) {
+    else {
+        int dfp_id = 0; // TODO: temp solution
         this->stop_model(dfp_id, model_id);
     }
 }
 
 void MxAccl::wait(int model_id)
-{
-    int dfp_id = -1; // TODO: temp solution
-
-    if(dfp_id == -1 && model_id == -1) {
+{   
+    if(model_id == -1) {
         this->wait_all();
     }
-    else if(dfp_id != -1 && model_id == -1) {
-        this->wait_dfp(dfp_id);
-    }
-    else if(dfp_id != -1 && model_id != -1) {
+    else {
+        int dfp_id = 0; // TODO: temp solution
         this->wait_model(dfp_id, model_id);
     }
 }

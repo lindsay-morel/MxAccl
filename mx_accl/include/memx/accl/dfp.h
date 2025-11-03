@@ -216,8 +216,9 @@ class DfpObject
      * @brief Constructor from raw bytes
      *
      * @param f  Pointer to data
+     * @param byte_size  Size of data in bytes
      */
-    MEMX_API_EXPORT DfpObject(uint8_t* b);
+    MEMX_API_EXPORT DfpObject(uint8_t* b, size_t byte_size);
 
     /**
      * @brief Constructor from a file (name as C++ std::string)
@@ -356,7 +357,7 @@ class DfpObject
 
     uint64_t hardware_size;
 
-    uint64_t dfp_byte_size;
+    size_t dfp_byte_size;
 
     std::vector<int> device_ids_to_use;
 

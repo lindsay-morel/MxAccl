@@ -12,12 +12,14 @@
 #include <vector>
 #include <thread>
 #include <tuple>
-#include <atomic>
 #include <mutex>
 #include <condition_variable>
 #include <algorithm>
 
-#include <memx/accl/utils/sync_queue.h>
+#include <memx/accl/utils/blocky_queue.h>
+#include <memx/accl/utils/locked_var.h>
+
+using namespace MX::Utils;
 
 class Task
 {
@@ -44,7 +46,7 @@ class CallbackTask: public Task
 class thread_pool
 {
   public:
-    thread_pool(const std::string &label, size_t workers, size_t continious, size_t max_jobs = 0);
+    thread_pool(const std::string &label, size_t workers, size_t continuous, size_t max_jobs = 0);
     template <typename F, typename... Args>
     void submitTask(F &&function, Args &&... args);
     void wait();
@@ -56,22 +58,22 @@ class thread_pool
     std::string m_label;
     size_t m_task_count{0};
     size_t m_done_count{0};
-    std::chrono::milliseconds m_timeout{50ms};
-    std::atomic<bool> m_stop{false};
+    unsigned int m_timeout = 50; // milliseconds
+    SharedLockedVar<bool> m_stop{false};
     std::mutex m_mutex;
     std::condition_variable m_done_condition;
-    bool m_continious;
-    sync_queue<Task*> m_task_queue;
+    bool m_continuous;
+    BlockyQueue<Task*> m_task_queue;
     std::vector<std::thread> m_workers;
 };
 
 using namespace std::chrono_literals;
 
 inline thread_pool::thread_pool(const std::string &label,
-                                size_t workers, size_t continious, size_t max_jobs):
+                                size_t workers, size_t continuous, size_t max_jobs):
     m_label(label),
-    m_continious(continious),
-    m_task_queue(sync_queue<Task*>(max_jobs))
+    m_continuous(continuous),
+    m_task_queue(BlockyQueue<Task*>(max_jobs))
 {
     for (size_t i = 0; i < workers; ++i) {
         m_workers.push_back(std::thread(&thread_pool::workerTarget, this));
@@ -81,22 +83,23 @@ inline thread_pool::thread_pool(const std::string &label,
 
 inline void thread_pool::workerTarget()
 {
-    while (!m_stop.load()) {
-        std::optional<Task*> opt = m_task_queue.pop(m_timeout);
-        if (!opt.has_value()) {
+    Task *ptask = nullptr;
+    while (m_stop == false) {
+        if(m_task_queue.pop_timeout(ptask, m_timeout) == false){
             continue;
         }
-        Task* ptask = opt.value();
-        if(m_continious) {
+
+        if(m_continuous) {
             if (ptask->execute()) {
-                while(!m_task_queue.push(ptask, m_timeout)) {
-                    if (m_stop.load()) {
+                while(m_task_queue.push_timeout(ptask, m_timeout) == false) {
+                    if (m_stop == true) {
                         return;
                     }
                 }
                 continue;
             }
             delete ptask;
+            ptask = nullptr;
             {
                 std::lock_guard lock(m_mutex);
                 m_done_count++;
@@ -108,27 +111,29 @@ inline void thread_pool::workerTarget()
         else {
             ptask->execute();
             delete ptask;
+            ptask = nullptr;
         }
     }
 }
 
 inline void thread_pool::stop()
 {
-    if(m_stop.load()) {
+    Task *ptask = nullptr;
+    if(m_stop == true) {
         return;
     }
-    m_stop.store(true);
+    m_stop = true;
     for (auto &worker : m_workers) {
         worker.join();
     }
-    if(m_continious) {
+    if(m_continuous) {
         while(m_done_count < m_task_count) {
-            std::optional<Task*> opt = m_task_queue.pop();
-            if (!opt.has_value()) {
+            m_task_queue.pop(ptask);
+            if (ptask == nullptr) {
                 break;
             }
-            Task* ptask = opt.value();
             delete ptask;
+            ptask = nullptr;
             m_done_count++;
         }
     }
@@ -153,7 +158,7 @@ template <typename F, typename... Args>
 inline void thread_pool::submitTask(F &&function, Args &&... args)
 {
     Task* pt = new CallbackTask<F, Args...>(std::forward<F>(function), std::forward<Args>(args)...);
-    m_task_queue.push(pt, m_timeout);
+    m_task_queue.push(pt);
     {
         std::lock_guard lock(m_mutex);
         m_task_count++;

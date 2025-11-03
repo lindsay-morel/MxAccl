@@ -96,8 +96,8 @@ if(NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
         target_link_options(mxa_manager PRIVATE /LTCG)
     else()
         # Enable LTO on GCC/Clang
-        target_compile_options(mxa_manager PRIVATE -flto -fno-semantic-interposition)
-        target_link_options(mxa_manager PRIVATE -flto -fno-semantic-interposition)
+        target_compile_options(mxa_manager PRIVATE -fno-pic -fPIE -flto -fno-semantic-interposition)
+        target_link_options(mxa_manager PRIVATE -fno-pic -fPIE -flto -fno-semantic-interposition)
 endif()
 endif()
 

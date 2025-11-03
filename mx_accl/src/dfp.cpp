@@ -117,12 +117,13 @@ unsigned int DataShapes::operator[](std::size_t idx) const
 //--------------------------------------------------
 
 // ctor using bytes
-DfpObject::DfpObject(uint8_t* b)
+DfpObject::DfpObject(uint8_t* b, size_t byte_size)
 {
     src_dfp_bytes = nullptr;
     iports = nullptr;
     oports = nullptr;
     is_from_file = false;
+    dfp_byte_size = byte_size;
     if(__load_dfp_bytes(b) != 0) {
         printf("Failed to load dfp from bytes\n");
         valid = false;

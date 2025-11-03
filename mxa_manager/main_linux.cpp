@@ -41,14 +41,10 @@ void signal_handler(int signum)
 
 // function to parse the mxa_manager.conf file from
 // a fixed path location: one for Linux and one for Windows
-bool parse_config_file(std::string* addr, unsigned short* base_port)
+bool parse_config_file(std::string* addr, unsigned short* base_port, std::string* log_level, unsigned int* hw_monitor_interval)
 {
     std::string config_path;
-#ifdef _WIN32
-    config_path = "C:\\Program Files\\memryx\\mxa_manager.conf";
-#else
     config_path = "/etc/memryx/mxa_manager.conf";
-#endif
 
     if(!std::filesystem::exists(config_path)) {
         spdlog::critical("Config file not found at {}", config_path);
@@ -62,9 +58,11 @@ bool parse_config_file(std::string* addr, unsigned short* base_port)
     std::string line;
 
     // the syntax of the config file ignores all lines starting with #,
-    // then looks for these two variables:
+    // then looks for these variables:
     // LISTEN_ADDRESS="address_as_string"
     // BASE_PORT=port_as_integer
+    // LOG_LEVEL=level
+    // HW_MONITOR_INTERVAL=interval_in_milliseconds
     //
     // addr is then assgined to the address string and base_port to the port integer
     bool found_addr = false;
@@ -78,6 +76,21 @@ bool parse_config_file(std::string* addr, unsigned short* base_port)
         else if(line.find("BASE_PORT=") != std::string::npos) {
             *base_port = std::stoi(line.substr(10));
             found_port = true;
+        }
+        else if(line.find("LOG_LEVEL=") != std::string::npos) {
+            std::string level = line.substr(10);
+            if(level == "debug" || level == "info" || level == "warn" || level == "critical" ||
+               level == "high" || level == "med" || level == "medium" || level == "low" ||
+               level == "off") {
+                *log_level = level;
+            }
+            else {
+                spdlog::warn("Invalid LOG_LEVEL in config file: {}. Using default (low).", level);
+                *log_level = "low";
+            }
+        }
+        else if(line.find("HW_MONITOR_INTERVAL=") != std::string::npos) {
+            *hw_monitor_interval = std::stoi(line.substr(20));
         }
     }
 
@@ -96,19 +109,38 @@ int main()
 {
     std::string addr;
     unsigned short base_port = 10000;
+    std::string log_level = "";
+    unsigned int hw_monitor_interval = 500; // in milliseconds
 
-    if(!parse_config_file(&addr, &base_port)) {
+    if(!parse_config_file(&addr, &base_port, &log_level, &hw_monitor_interval)) {
         return EXIT_FAILURE;
     }
 
-    spdlog::cfg::load_env_levels(); // load log levels from environment variables
-    spdlog::set_pattern("%^[%l]%$ %v");
+    // set up spdlog logging
+    if(log_level == "") {
+        spdlog::cfg::load_env_levels(); // load log levels from environment variables
+    } else {
+        spdlog::level::level_enum level;
+        if(log_level == "debug" || log_level == "high") {
+            level = spdlog::level::debug;
+        } else if(log_level == "info" || log_level == "med" || log_level == "medium") {
+            level = spdlog::level::info;
+        } else if(log_level == "warn" || log_level == "low") {
+            level = spdlog::level::warn;
+        } else if(log_level == "critical" || log_level == "off") {
+            level = spdlog::level::critical;
+        } else {
+            level = spdlog::level::warn; // default
+        }
+        spdlog::set_level(level);
+    }
+    spdlog::set_pattern("[thread %t] [%l]%$ %v");
 
     // set CPU affinity to big cores, requiring at least 2
     MX::Utils::set_self_affinity_to_big_cores(2);
 
     // create server object
-    server = new MX::Manager::Server(addr, base_port);
+    server = new MX::Manager::Server(addr, base_port, hw_monitor_interval);
 
     // set up signal handler for ctrl+c
     std::signal(SIGINT, signal_handler);
@@ -118,7 +150,7 @@ int main()
 
     // sleep the main thread forever
     while (true) {
-        std::this_thread::sleep_for(std::chrono::seconds(1));
+        std::this_thread::sleep_for(std::chrono::seconds(5));
     }
 
     return EXIT_SUCCESS;

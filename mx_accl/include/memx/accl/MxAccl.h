@@ -11,7 +11,6 @@
 #pragma once
 #include <string>
 #include <stdint.h>
-#include <atomic>
 #include <thread>
 #include <map>
 #include <unordered_map>
@@ -21,7 +20,6 @@
 #include <memx/accl/MxModel.h>
 #include <memx/accl/MxAcclBase.h>
 #include <memx/accl/dfp.h>
-#include <memx/accl/utils/general.h>
 #include <memx/accl/utils/featureMap.h>
 #include <memx/accl/utils/path.h>
 #include <memx/accl/DeviceManager.h>
@@ -79,7 +77,7 @@ class MxAccl : public MxAcclBase
     *
     * @param sched_options 
     * Runtime scheduler configuration used when operating in shared mode. Includes frame limits, timeouts,
-    * and queue sizes. Default is `{frame_limit = 600, timeout = 0, swap_on_empty = false, input_queue_size = 16, output_queue_size = 12}`.
+    * and queue sizes. Default is `{frame_limit = 20, timeout = 250, swap_on_empty = false, input_queue_size = 16, output_queue_size = 21}`.
     * See @ref MX::RPC::SchedulerOptions for detailed field descriptions.
     *
     * @param client_options 
@@ -105,7 +103,7 @@ class MxAccl : public MxAcclBase
            std::vector<int> device_ids_to_use = {0},
            std::array<bool, 2> use_model_shape = {true, true},
            bool local_mode = false,
-           SchedulerOptions sched_options = {600, 0, false, 16, 12},
+           SchedulerOptions sched_options = {20, 250, false, 16, 21},
            ClientOptions client_options = {false, 0},
            std::string server_addr = "/run/mxa_manager/",
            unsigned int server_port_base = 10000,
@@ -123,6 +121,9 @@ class MxAccl : public MxAcclBase
     * @param dfp_bytes 
     * Raw `uint8_t*` pointer to memory containing the already-loaded DFP file data.
     *
+    * @param dfp_byte_size
+    * Size of the DFP data in bytes.
+    * 
     * @param device_ids_to_use 
     * List of MXA device IDs to use for execution. Specify `{-1}` to indicate that all available devices should be used.
     * Default is `{0}`.
@@ -137,7 +138,7 @@ class MxAccl : public MxAcclBase
     *
     * @param sched_options 
     * Runtime scheduler configuration used when operating in shared mode. Includes frame limits, timeouts,
-    * and queue sizes. Default is `{frame_limit = 600, timeout = 0, swap_on_empty = false, input_queue_size = 16, output_queue_size = 12}`.
+    * and queue sizes. Default is `{frame_limit = 20, timeout = 250, swap_on_empty = false, input_queue_size = 16, output_queue_size = 21}`.
     * See @ref MX::RPC::SchedulerOptions for detailed field descriptions.
     *
     * @param client_options 
@@ -160,14 +161,15 @@ class MxAccl : public MxAcclBase
     * if multiple clients or containers access the same device concurrently. Use with caution.
     */
     MEMX_API_EXPORT MxAccl(uint8_t* dfp_bytes,
+           size_t dfp_byte_size,
            std::vector<int> device_ids_to_use = {0},
            std::array<bool, 2> use_model_shape = {true, true},
            bool local_mode = false,
-           SchedulerOptions sched_options = {600, 0, false, 16, 12},
+           SchedulerOptions sched_options = {20, 250, false, 16, 21},
            ClientOptions client_options = {false, 0},
            std::string server_addr = "/run/mxa_manager/",
            unsigned int server_port_base = 10000,
-           bool ignore_server_ = false) : MxAcclBase(dfp_bytes, device_ids_to_use,
+           bool ignore_server_ = false) : MxAcclBase(dfp_bytes, dfp_byte_size, device_ids_to_use,
                use_model_shape, local_mode, sched_options, client_options, server_addr,
                server_port_base, ignore_server_) {}
     

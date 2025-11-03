@@ -6,7 +6,7 @@ include /usr/share/dpkg/pkg-info.mk
 include /usr/share/dpkg/architecture.mk
 
 %:
-	dh $@ --with=systemd,installsysusers
+	dh $@ --with=systemd,sysuser
 
 override_dh_install:
 	dh_install build/mxa_manager/mxa_manager usr/bin/
@@ -23,6 +23,11 @@ override_dh_installinit:
 
 override_dh_shlibdeps:
 	dh_shlibdeps --dpkg-shlibdeps-params=--ignore-missing-info
+
+override_dh_gencontrol:
+	sed -i -E 's/\b(sysuser-helper) \([^)]+\)/\1/g' debian/mxa-manager.substvars
+	sed -i -E 's/[, ]+,/,/g; s/,\s*$$//' debian/mxa-manager.substvars
+	dh_gencontrol
 
 override_dh_auto_configure:
 override_dh_auto_build:

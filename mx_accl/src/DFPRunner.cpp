@@ -7,7 +7,6 @@
 
 #include <string>
 #include <stdint.h>
-#include <atomic>
 #include <thread>
 #include <map>
 #include <unordered_map>
@@ -92,7 +91,7 @@ void DFPRunner::devman_discover(Client* client_)
 {
     // discover devices using the device manager
     if(device_manager_ != nullptr) {
-        if(device_manager_->discover_done.load() == false) {
+        if(device_manager_->discover_done == false) {
             if(ignore_server_) {
                 device_manager_->discover_devices_direct();
             }
@@ -216,7 +215,7 @@ bool DFPRunner::init_local()
             if(clients[0] != nullptr) {
                 for(auto id : device_ids_to_use_) {
                     clients[0]->local_unlock(id);
-                    device_manager_->local_device_in_use[id] = true;
+                    device_manager_->local_device_in_use[id] = false;
                 }
                 delete clients[0];
                 clients.clear();
@@ -242,7 +241,7 @@ bool DFPRunner::init_local()
         if(clients[0] != nullptr) {
             for(auto id : device_ids_to_use_) {
                 clients[0]->local_unlock(id);
-                device_manager_->local_device_in_use[id] = true;
+                device_manager_->local_device_in_use[id] = false;
             }
             delete clients[0];
             clients.clear();
@@ -258,12 +257,39 @@ bool DFPRunner::init_local()
         return false;
     }
 
-    // Use the DeviceManager to set_power_mode for each opened device
+    // Use the DeviceManager to check chip counts and set_power_mode for each opened device
     for(auto context_id : open_contexts_) {
         int device_id = context_id; // because we assigned context_id to device_id in memx_open
         if(device_manager_ != nullptr) {
             // get num_chips from the device_infos for this device id
             int device_chip_count = device_manager_->device_infos[device_id].chip_count;
+
+            // check that the DFP num_chips == the device_chip_count
+            if(dfp_->get_dfp_meta()->num_chips != device_chip_count) {
+                spdlog::error("[DFPRunner] DFP num_chips {} does not match chip count {} (device_id: {})",
+                              dfp_->get_dfp_meta()->num_chips, device_chip_count, device_id);
+                // unlock any that were locked by us
+                if(clients[0] != nullptr) {
+                    for(auto id : device_ids_to_use_) {
+                        clients[0]->local_unlock(id);
+                        device_manager_->local_device_in_use[id] = false;
+                    }
+                    delete clients[0];
+                    clients.clear();
+                }
+                // memx_close any open contexts
+                for(auto context_id : open_contexts_) {
+                    memx_close(context_id);
+                    if(ignore_server_) {
+                        memx_unlock(context_id);
+                    }
+                }
+                open_contexts_.clear();
+
+                throw std::runtime_error("DFP num_chips does not match device num_chips");
+
+                return false;
+            }
 
             // We use MX::Types::FREQ_USE_CONF to set the power mode always
             device_manager_->set_power_mode(device_id, device_chip_count);

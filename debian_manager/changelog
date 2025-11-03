@@ -1,8 +1,69 @@
-mxa-manager (2.0.0-6) testing; urgency=medium
+mxa-manager (2.1.0-6) testing; urgency=medium
 
-    * The Great SDK 2.0 Release -- test build
+    * Bugfixes
 
- -- MemryX <no-reply@memryx.com>  Thu, 24 Jul 2025 00:00:00 -0500
+ -- MemryX <no-reply@memryx.com>  Tue, 28 Oct 2025 00:00:00 -0500
+
+mxa-manager (2.1.0-5) testing; urgency=medium
+
+    * Bugfixes and mxa-manager refactoring
+
+ -- MemryX <no-reply@memryx.com>  Tue, 21 Oct 2025 00:00:00 -0500
+
+mxa-manager (2.1.0-3) testing; urgency=medium
+
+    * All the new SDK 2.1 runtime features
+
+ -- MemryX <no-reply@memryx.com>  Tue, 14 Oct 2025 00:00:00 -0500
+
+mxa-manager (2.0.5-4) stable; urgency=medium
+
+    * Compatibility with Ubuntu 25.04+ and Debian 13
+
+ -- MemryX <no-reply@memryx.com>  Thu, 11 Sep 2025 00:00:00 -0500
+
+mxa-manager (2.0.5-3) stable; urgency=medium
+
+    * Hide debug printf
+
+ -- MemryX <no-reply@memryx.com>  Tue, 9 Sep 2025 00:00:00 -0500
+
+mxa-manager (2.0.5-2) stable; urgency=medium
+
+    * Significant speedup to FeatureMap get_data & set_data
+
+ -- MemryX <no-reply@memryx.com>  Fri, 5 Sep 2025 00:00:00 -0500
+
+mxa-manager (2.0.4-1) stable; urgency=medium
+
+    * acclBench: add -u option and default use_model_shape back to OFF
+    * add support for 1-chip modules
+
+ -- MemryX <no-reply@memryx.com>  Mon, 25 Aug 2025 00:00:00 -0500
+
+mxa-manager (2.0.3-3) stable; urgency=medium
+
+    * more mxa-manager bugfixes
+
+ -- MemryX <no-reply@memryx.com>  Thu, 14 Aug 2025 00:00:01 -0500
+
+mxa-manager (2.0.2-1) stable; urgency=medium
+
+    * mxa-manager bugfixes
+
+ -- MemryX <no-reply@memryx.com>  Thu, 7 Aug 2025 00:00:00 -0500
+
+mxa-manager (2.0.0-9) stable; urgency=medium
+
+    * cleanup potential use-after-free bug in mxa-manager
+
+ -- MemryX <no-reply@memryx.com>  Tue, 29 Jul 2025 00:00:00 -0500
+
+mxa-manager (2.0.0-8) testing; urgency=medium
+
+    * The Great SDK 2.0 Release
+
+ -- MemryX <no-reply@memryx.com>  Mon, 28 Jul 2025 00:00:00 -0500
 
 mxa-manager (1.2.1-3) stable; urgency=medium
 

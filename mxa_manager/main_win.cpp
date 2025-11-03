@@ -41,7 +41,7 @@ void init_logging()
 }
 
 // function to parse the mxa_manager.conf file from a fixed path location
-bool parse_config_file(std::string& addr, unsigned short& base_port)
+bool parse_config_file(std::string& addr, unsigned short& base_port, std::string& log_level, unsigned int& hw_monitor_interval)
 {
     std::string config_path = "C:\\Program Files\\memryx\\mxa_manager.conf";
 
@@ -60,6 +60,9 @@ bool parse_config_file(std::string& addr, unsigned short& base_port)
     // then looks for these two variables:
     // LISTEN_ADDRESS="address_as_string"
     // BASE_PORT=port_as_integer
+    // LOG_LEVEL=level
+    // HW_MONITOR_INTERVAL=interval_in_milliseconds
+    //
     // addr is then assgined to the address string and base_port to the port integer
     bool found_addr = false;
     bool found_port = false;
@@ -71,6 +74,21 @@ bool parse_config_file(std::string& addr, unsigned short& base_port)
         } else if (line.rfind("BASE_PORT=", 0) == 0) {
             base_port = static_cast<unsigned short>(std::stoi(line.substr(10)));
             found_port = true;
+        }
+        else if(line.find("LOG_LEVEL=") != std::string::npos) {
+            std::string level = line.substr(10);
+            if(level == "debug" || level == "info" || level == "warn" || level == "critical" ||
+               level == "high" || level == "med" || level == "medium" || level == "low" ||
+               level == "off") {
+                log_level = level;
+            }
+            else {
+                spdlog::warn("Invalid LOG_LEVEL in config file: {}. Using default (low).", level);
+                log_level = "low";
+            }
+        }
+        else if(line.find("HW_MONITOR_INTERVAL=") != std::string::npos) {
+            hw_monitor_interval = static_cast<unsigned int>(std::stoi(line.substr(20)));
         }
     }
 
@@ -142,19 +160,39 @@ void WINAPI ServiceMain(DWORD argc, LPSTR *argv) {
 
     std::string addr = "127.0.0.1";
     unsigned short base_port = 10000;
+    std::string log_level = "";
+    unsigned int hw_monitor_interval = 500;
     if (!parse_config_file(addr, base_port)) {
         spdlog::error("Configuration parse failed", EVENTLOG_ERROR_TYPE);
         ReportServiceStatus(SERVICE_STOPPED, NO_ERROR, 0);
         return;
     }
     spdlog::info("Starting server on {}:{}", addr, base_port);
+    // set up spdlog logging
+    if(log_level == "") {
+        spdlog::cfg::load_env_levels(); // load log levels from environment variables
+    } else {
+        spdlog::level::level_enum level;
+        if(log_level == "debug" || log_level == "high") {
+            level = spdlog::level::debug;
+        } else if(log_level == "info" || log_level == "med" || log_level == "medium") {
+            level = spdlog::level::info;
+        } else if(log_level == "warn" || log_level == "low") {
+            level = spdlog::level::warn;
+        } else if(log_level == "critical" || log_level == "off") {
+            level = spdlog::level::critical;
+        } else {
+            level = spdlog::level::warn; // default
+        }
+        spdlog::set_level(level);
+    }
 
     // Report running status
     ReportServiceStatus(SERVICE_RUNNING, NO_ERROR, 0);
     spdlog::info("Reported RUNNING");
 
     // Start the server (blocks until stop event)
-    std::unique_ptr<Server> srv = std::make_unique<Server>(addr, base_port);
+    std::unique_ptr<Server> srv = std::make_unique<Server>(addr, base_port, hw_monitor_interval);
     std::thread worker([&srv]() {
         srv->start();
     });

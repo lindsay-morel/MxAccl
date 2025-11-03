@@ -29,5 +29,9 @@
     #define TSAN_RELEASE(a)
 #endif
 
+// Pipeline pressure thresholds
+#define MEMX_PRESSURE_LOW_THRESH 20.0f
+#define MEMX_PRESSURE_MEDIUM_THRESH 65.0f
+#define MEMX_PRESSURE_HIGH_THRESH 92.0f
 
 #endif // MX_MACROS_H

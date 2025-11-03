@@ -11,7 +11,6 @@
 #pragma once
 #include <string>
 #include <stdint.h>
-#include <atomic>
 #include <thread>
 #include <map>
 #include <array>
@@ -23,7 +22,6 @@
 #include <memx/accl/DeviceManager.h>
 #include <memx/accl/client.h>
 #include <memx/accl/dfp.h>
-#include <memx/accl/utils/general.h>
 #include <memx/accl/utils/featureMap.h>
 #include <memx/accl/utils/path.h>
 #include <memx/accl/utils/mxTypes.h>

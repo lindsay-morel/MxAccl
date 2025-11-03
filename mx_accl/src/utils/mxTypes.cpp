@@ -86,23 +86,97 @@ MxVoltageOption MX::Types::getVoltageFromFrequency(MxFrequencyOption freq)
 {
     switch (freq) {
         case MxFrequencyOption::FREQ_200MHz:
+        case MxFrequencyOption::FREQ_225MHz:
+        case MxFrequencyOption::FREQ_250MHz:
+        case MxFrequencyOption::FREQ_275MHz:
+            return MxVoltageOption::VOLT_670mV;
+        
         case MxFrequencyOption::FREQ_300MHz:
+        case MxFrequencyOption::FREQ_325MHz:
+            return MxVoltageOption::VOLT_675mV;
+
+
+        case MxFrequencyOption::FREQ_350MHz:
+        case MxFrequencyOption::FREQ_375MHz:
             return MxVoltageOption::VOLT_680mV;
+        
         case MxFrequencyOption::FREQ_400MHz:
-            return MxVoltageOption::VOLT_690mV;
+        case MxFrequencyOption::FREQ_425MHz:
         case MxFrequencyOption::FREQ_450MHz:
+            return MxVoltageOption::VOLT_685mV;
+
+        case MxFrequencyOption::FREQ_475MHz:
         case MxFrequencyOption::FREQ_500MHz:
+        case MxFrequencyOption::FREQ_525MHz:
+            return MxVoltageOption::VOLT_690mV;
+        
+        case MxFrequencyOption::FREQ_550MHz:
+        case MxFrequencyOption::FREQ_575MHz:
+            return MxVoltageOption::VOLT_695mV;
+
         case MxFrequencyOption::FREQ_600MHz:
             return MxVoltageOption::VOLT_700mV;
+        
+        case MxFrequencyOption::FREQ_625MHz:
+            return MxVoltageOption::VOLT_705mV;
+
+        case MxFrequencyOption::FREQ_650MHz:
+            return MxVoltageOption::VOLT_710mV;
+
+        case MxFrequencyOption::FREQ_675MHz:
+            return MxVoltageOption::VOLT_720mV;
+        
         case MxFrequencyOption::FREQ_700MHz:
-            return MxVoltageOption::VOLT_750mV;
+            return MxVoltageOption::VOLT_725mV;
+
+        case MxFrequencyOption::FREQ_725MHz:
+            return MxVoltageOption::VOLT_740mV;
+        
         case MxFrequencyOption::FREQ_750MHz:
-            return MxVoltageOption::VOLT_760mV;
+            return MxVoltageOption::VOLT_745mV;
+
+        case MxFrequencyOption::FREQ_775MHz:
+            return MxVoltageOption::VOLT_750mV;
+
         case MxFrequencyOption::FREQ_800MHz:
+            return MxVoltageOption::VOLT_760mV;
+        
+        case MxFrequencyOption::FREQ_825MHz:
+            return MxVoltageOption::VOLT_770mV;
+        
         case MxFrequencyOption::FREQ_850MHz:
             return MxVoltageOption::VOLT_780mV;
+        
+        case MxFrequencyOption::FREQ_875MHz:
+            return MxVoltageOption::VOLT_790mV;
+        
+        case MxFrequencyOption::FREQ_900MHz:
+            return MxVoltageOption::VOLT_800mV;
+        
+        case MxFrequencyOption::FREQ_925MHz:
+            return MxVoltageOption::VOLT_815mV;
+        
+        case MxFrequencyOption::FREQ_950MHz:
+            return MxVoltageOption::VOLT_820mV;
+        
+        case MxFrequencyOption::FREQ_975MHz:
+            return MxVoltageOption::VOLT_835mV;
+        
+        case MxFrequencyOption::FREQ_1000MHz:
+            return MxVoltageOption::VOLT_850mV;
+
         default:
             throw std::invalid_argument("Invalid frequency option.");
     }
 }
 
+
+std::string MX::Types::mxFrequencyOptionToString(MxFrequencyOption freq){
+    // if 0, return "USE_CONF"
+    // else return the number as string + MHz
+    if (freq == MxFrequencyOption::FREQ_USE_CONF) {
+        return "USE_CONF";
+    } else {
+        return std::to_string(static_cast<int>(freq)) + "MHz";
+    }
+}

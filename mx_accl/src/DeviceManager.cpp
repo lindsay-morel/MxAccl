@@ -40,7 +40,7 @@ bool DeviceManager::discover_devices_direct()
 {
     std::lock_guard<std::mutex> lock(m_discover);
 
-    if(discover_done.load()) {
+    if(discover_done == true) {
         spdlog::debug("[DeviceManager] Devices already discovered, skipping discovery.");
         return true;
     }
@@ -135,7 +135,7 @@ bool DeviceManager::discover_devices_remote(Client* client)
 {
     std::lock_guard<std::mutex> lock(m_discover);
 
-    if(discover_done.load()) {
+    if(discover_done == true) {
         spdlog::debug("[DeviceManager] Devices already discovered, skipping discovery.");
         return true;
     }
@@ -156,7 +156,6 @@ bool DeviceManager::discover_devices_remote(Client* client)
     local_device_in_use.resize(all_devices_count, false);
 
     discover_done = true;
-    print_all_devices();
     return true;
 }
 
@@ -278,6 +277,10 @@ bool DeviceManager::set_power_mode(int device_id, int num_chips, MX::Types::MxFr
             }
             status = memx_set_feature(device_id, 0, OPCODE_SET_VOLTAGE, c4_volt);
         }
+        else if (num_chips == 1) {
+            status = memx_set_feature(device_id, 0, OPCODE_SET_FREQUENCY, c2_freq);
+            status = memx_set_feature(device_id, 0, OPCODE_SET_VOLTAGE,   c2_volt);
+        }
         else {
             throw std::runtime_error("Invalid number of chips passed to DeviceManager::set_power_mode");
             return false;
@@ -344,6 +347,20 @@ float DeviceManager::get_power(int device_id)
         std::cerr << "Connected device does not support power measurement\n";
         return -1.0f;
     }
+}
+
+
+float DeviceManager::get_pressure(int device_id)
+{
+
+    if(device_id < 0 || device_id >= all_devices_count) {
+        std::cerr << "Invalid device ID given to DeviceManager::get_pressure: " << device_id << std::endl;
+        return -1.0f;
+    }
+
+    uint64_t util = 0;
+    memx_get_feature(device_id, 0, OPCODE_GET_MPU_UTILIZATION, &util);
+    return (float) util;
 }
 
 

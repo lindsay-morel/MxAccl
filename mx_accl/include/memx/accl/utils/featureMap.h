@@ -12,14 +12,18 @@
 #include <vector>
 #include <stdint.h>
 #include <stdexcept>
-#include <atomic>
+#include <mutex>
+#include <condition_variable>
 #include <unordered_set>
 
 #include <memx/accl/dfp.h>
 #include <memx/accl/utils/macros.h>
-#include <memx/accl/utils/general.h>
 #include <memx/accl/utils/errors.h>
 #include <memx/accl/utils/mxTypes.h>
+#include <memx/accl/utils/locked_var.h>
+
+using namespace std;
+using namespace MX::Utils;
 
 namespace MX
 {
@@ -129,9 +133,9 @@ public:
     //sets the the out_ready flag to user input
     MEMX_API_EXPORT void set_out_ready(bool flag);
     //return in_ready flag
-    MEMX_API_EXPORT bool get_in_ready();
+    MEMX_API_EXPORT bool get_in_ready() const;
     //returns out_ready flag
-    MEMX_API_EXPORT bool get_out_ready();
+    MEMX_API_EXPORT bool get_out_ready() const;
     // Transpose function to use if channel first is required
     MEMX_API_EXPORT void transpose_hwdc_chwd(const void* vinput, void* voutput) const;
     //transpose function to use if channel last is required
@@ -174,8 +178,8 @@ public:
     void convert_data(void* vdata) const; // converts *data -> *formatted_data
     void unconvert_data(void* vdata) const; // converts *formatted_data -> *data
     void calc_convert_size_and_new(); // calculates size for and allocates formatted bytes
-    mutable std::atomic_bool out_ready; //flag that is used by MxModel
-    mutable std::atomic_bool in_ready; //flag that is used by MxModel
+    mutable SharedLockedVar<bool> out_ready; //flag that is used by MxModel
+    mutable SharedLockedVar<bool> in_ready; //flag that is used by MxModel
     std::mutex wait_m; //
     bool wait_flag;
     std::condition_variable wait_cv;

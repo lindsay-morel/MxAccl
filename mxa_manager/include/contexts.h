@@ -11,7 +11,6 @@
 #pragma once
 #include <string>
 #include <vector>
-#include <atomic>
 #include <deque>
 #include <cstdint>
 #include <cstring>
@@ -25,6 +24,8 @@
 #include "mxasio.hpp"
 
 #include <memx/accl/dfp.h>
+#include <memx/accl/messages.h>
+#include <memx/accl/utils/locked_var.h>
 #include <memx/accl/utils/macros.h>
 #include <memx/accl/utils/sha512.h>
 #include <memx/accl/utils/id_tracker.h>
@@ -33,6 +34,7 @@
 using mxasio::ip::tcp;
 
 using namespace MX::RPC;
+using namespace MX::Utils;
 using namespace MX::sha512;
 
 namespace MX
@@ -110,7 +112,7 @@ class ContextClient
     std::unordered_map<uint8_t, BQExtFlag<IomapItem*>*>* ofmap_freelists;
 
     explicit ContextClient(uint32_t id_, uint32_t obuffer_size_, uint32_t num_ofmaps_, uint64_t* ofmap_sizes,
-                           std::vector<uint8_t> allowed_driver_ctxs_, std::atomic_bool* alive_flag);
+                           std::vector<uint8_t> allowed_driver_ctxs_, SharedLockedVar<bool> *alive_flag);
 
     ~ContextClient();
 
@@ -158,7 +160,7 @@ class ModelContext
     std::mutex client_table_lock;
 
     // creates a new client entry (including ofmap queues)
-    ContextClient* add_client(uint32_t id, std::atomic_bool* alive_flag);
+    ContextClient* add_client(uint32_t id, SharedLockedVar<bool> *alive_flag);
 
     bool is_client_existed(ContextClient* client);
     bool is_client_list_empty();
@@ -282,12 +284,14 @@ struct port_infos_t {
 struct dfp_info_t {
     Dfp::DfpObject* dfp;
     int num_models;
+    int num_chips;
     size_t biggest_ofmap_bytes;
     // have start/stop in/out ports for each model (model index = vector index)
     std::vector<port_infos_t*> port_info;
     dfp_info_t(int num_models_)
     {
         num_models = num_models_;
+        num_chips = -1; // invalid by default, must be set later
     }
     ~dfp_info_t()
     {
@@ -321,11 +325,10 @@ class DFPContext
     // sum of all clients of all models
     // when this reaches 0, we can start considering
     // deleting the DFPContext
-    std::atomic_int client_ref_count;
+    LockedVar<int> client_ref_count;
 
     // number of ExecutorTasks that are currently referencing this DFPContext
-    std::mutex exec_ref_count_lock;
-    int exec_ref_count;
+    LockedVar<int> exec_ref_count;
 
     // print the dfp info
     void print_info();

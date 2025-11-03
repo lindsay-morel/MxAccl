@@ -528,56 +528,6 @@ FeatureMap &FeatureMap::operator=(const FeatureMap &rhs)
 
 void FeatureMap::detect_only_transpose()
 {
-    //// check for the common case of channel-first -> channel-last transpose, which is when all of these are true:
-    ////
-    //// 1. pinfo->shape_shift_info.folded_optype.size() == 1
-    //// 2. pinfo->shape_shift_info.folded_optype[0] == "transpose"
-    //// 3. pinfo->shape_shift_info.folded_opshape.size() == 1
-    //// 4. pinfo->shape_shift_info.folded_opshape[0].size() == 4
-    //// 5. pinfo->shape_shift_info.folded_opshape[0] = {0, 2, 3, 1}
-    //// 6. pinfo->shape_shift_info.add.size() == 1
-    //// 7. pinfo->shape_shift_info.add[0] == 3
-    //// 8. pinfo->shape_shift_info.remove.size() == 1
-    //// 9. pinfo->shape_shift_info.remove[0] == 0
-    ////
-    //// if all are true, set only_transpose to true
-    ////
-    //// many conditions will need to be nested if's, since we can't give out of range vector access errors
-    //if(pinfo != nullptr)
-    //    if(pinfo->shape_shift_info.folded_optype.size() == 1)
-    //        if(pinfo->shape_shift_info.folded_optype[0] == "transpose")
-    //            if(pinfo->shape_shift_info.folded_opshape.size() == 1)
-    //                if(pinfo->shape_shift_info.folded_opshape[0].size() == 4)
-    //                    if(pinfo->shape_shift_info.folded_opshape[0][0] == 0 &&
-    //                            pinfo->shape_shift_info.folded_opshape[0][1] == 2 &&
-    //                            pinfo->shape_shift_info.folded_opshape[0][2] == 3 &&
-    //                            pinfo->shape_shift_info.folded_opshape[0][3] == 1)
-    //                        if(pinfo->shape_shift_info.add.size() == 1)
-    //                            if(pinfo->shape_shift_info.add[0] == 3)
-    //                                if(pinfo->shape_shift_info.remove.size() == 1)
-    //                                    if(pinfo->shape_shift_info.remove[0] == 0) {
-    //                                        only_transpose = true;
-    //                                    }
-
-
-    //// else check for channel-last -> channel-first transpose, which is when all of these are true:
-    //if(pinfo != nullptr)
-    //    if(pinfo->shape_shift_info.folded_optype.size() == 1)
-    //        if(pinfo->shape_shift_info.folded_optype[0] == "transpose")
-    //            if(pinfo->shape_shift_info.folded_opshape.size() == 1)
-    //                if(pinfo->shape_shift_info.folded_opshape[0].size() == 4)
-    //                    if(pinfo->shape_shift_info.folded_opshape[0][0] == 0 &&
-    //                            pinfo->shape_shift_info.folded_opshape[0][1] == 3 &&
-    //                            pinfo->shape_shift_info.folded_opshape[0][2] == 1 &&
-    //                            pinfo->shape_shift_info.folded_opshape[0][3] == 2)
-    //                        if(pinfo->shape_shift_info.add.size() == 1)
-    //                            if(pinfo->shape_shift_info.add[0] == 0)
-    //                                if(pinfo->shape_shift_info.remove.size() == 1)
-    //                                    if(pinfo->shape_shift_info.remove[0] == 3) {
-    //                                        only_transpose = true;
-    //                                    }
-
-
     // honestly, DFP shapes right now are useless for C++ where everything is 1D flat arrays...
     // so let's just assume any transpose == channel first/last, else we no-op
     if(pinfo != nullptr) {
@@ -660,13 +610,7 @@ void FeatureMap::convert_data(void* vdata) const
 {
     uint32_t* sdata = (uint32_t*) vdata;
     if (fmt == MX_FMT_BF16) {
-        uint32_t* fp_uint32 = (uint32_t*) sdata;
-
-        #pragma omp for schedule(static)  // ignored if not parallel
-        for(size_t i = 0; i < featureMap_size; i++) {
-            uint32_t v = fp_uint32[i] + 0x00008000;
-            memcpy(&(formatted_data[i * 2]), ((uint8_t*) &v) + 2, 2);
-        }
+        bf16_encode(sdata, formatted_data, featureMap_size);
     }
     else if (fmt == MX_FMT_GBF80) {
         #pragma omp for schedule(static)  // ignored if not parallel
@@ -708,13 +652,7 @@ void FeatureMap::unconvert_data(void* vdata) const
 {
     uint32_t* ddata = (uint32_t*) vdata;
     if (fmt == MX_FMT_BF16) {
-        memset(ddata, 0, featureMap_size * sizeof(float)); // wipe fmap_data
-
-        uint16_t* bf_dat = (uint16_t*) formatted_data;
-        #pragma omp for schedule(static)  // ignored if not parallel
-        for(size_t i = 0; i < featureMap_size; i++) {
-            memcpy(((uint8_t*) (ddata + i)) + 2, (uint8_t*) (bf_dat + i), 2);
-        }
+        bf16_decode(formatted_data, ddata, featureMap_size);
     }
     else if (fmt == MX_FMT_GBF80) {
 
@@ -848,12 +786,12 @@ void FeatureMap::transpose_hwdc_chwd(const void* __restrict vinput, void* __rest
     const uint32_t* __restrict input = (const uint32_t*) vinput;
     uint32_t* __restrict output = (uint32_t*) voutput;
     #pragma omp for schedule(static)  // ignored if not parallel
-    for (unsigned int d = 0; d < dim_z; ++d) { // make this the outer loop to optimize for dim_z==1
+    for (unsigned int z = 0; z < dim_z; ++z) { // make this the outer loop to optimize for dim_z==1
         for (unsigned int c = 0; c < dim_c; ++c) {
             for (unsigned int h = 0; h < dim_h; ++h) {
                 for (unsigned int w = 0; w < dim_w; ++w) {
-                    output[c * dim_h * dim_w * dim_z + h * dim_w * dim_z + w * dim_z + d] =
-                        input[h * dim_w * dim_z * dim_c + w * dim_z * dim_c + d * dim_c + c];
+                    output[c * dim_h * dim_w * dim_z + h * dim_w * dim_z + w * dim_z + z] =
+                        input[h * dim_w * dim_z * dim_c + w * dim_z * dim_c + z * dim_c + c];
                 }
             }
         }
@@ -865,452 +803,18 @@ void FeatureMap::transpose_chwd_hwdc(const void* __restrict vinput, void* __rest
     const uint32_t* __restrict input = (const uint32_t*) vinput;
     uint32_t* __restrict output = (uint32_t*) voutput;
     #pragma omp for collapse(3) schedule(static)  // ignored if not parallel
-    for (unsigned int d = 0; d < dim_z; ++d) { // make this the outer loop to optimize for dim_z==1
+    for (unsigned int z = 0; z < dim_z; ++z) { // make this the outer loop to optimize for dim_z==1
         for (unsigned int h = 0; h < dim_h; ++h) {
             for (unsigned int w = 0; w < dim_w; ++w) {
                 for (unsigned int c = 0; c < dim_c; ++c) {
-                    output[h * dim_w * dim_z * dim_c + w * dim_z * dim_c + d * dim_c + c] =
-                        input[c * dim_h * dim_w * dim_z + h * dim_w * dim_z + w * dim_z + d];
+                    output[h * dim_w * dim_z * dim_c + w * dim_z * dim_c + z * dim_c + c] =
+                        input[c * dim_h * dim_w * dim_z + h * dim_w * dim_z + w * dim_z + z];
                 }
             }
         }
     }
 }
 
-
-
-//// Transpose an N-D array in row-major order.
-////   input   : flat array of size = ∏ shape[i]
-////   output  : flat array of same size, already allocated
-////   shape   : pointer to array of length ndims, giving the extents in each dim
-////   axes    : pointer to array of length ndims, giving the target permutation
-////   ndims   : number of dimensions
-////
-//// Example: transpose_hwdc_chwd ≡
-////   transpose_any(in, out, {H, W, D, C}, {3,0,1,2}, 4);
-//void transpose_any(const float* __restrict input,
-//                   float*       __restrict output,
-//                   std::vector<int>        shape,
-//                   std::vector<int>        axes,
-//                   int                     ndims)
-//{
-//    // 1) Compute total number of elements
-//    int N = 1;
-//    for (int i = 0; i < ndims; ++i) {
-//        N *= shape[i];
-//    }
-//
-//    // 2) Build row-major strides for the input
-//    //    in_stride[i] = product(shape[i+1..ndims-1])
-//    std::vector<int> in_stride(ndims);
-//    in_stride[ndims - 1] = 1;
-//    for (int i = int(ndims) - 2; i >= 0; --i) {
-//        in_stride[i] = in_stride[i + 1] * shape[i + 1];
-//    }
-//
-//    // 3) Build row-major strides for the *output* layout implied by axes[]
-//    //    First make an array of the output shape:
-//    std::vector<int> out_shape(ndims);
-//    for (int i = 0; i < ndims; ++i) {
-//        out_shape[i] = shape[axes[i]];
-//    }
-//    //    Then strides:
-//    std::vector<int> out_stride(ndims);
-//    out_stride[ndims - 1] = 1;
-//    for (int i = int(ndims) - 2; i >= 0; --i) {
-//        out_stride[i] = out_stride[i + 1] * out_shape[i + 1];
-//    }
-//
-//    // 4) For each *original* axis k, record how much it contributes to the
-//    //    output linear index: find pos so that axes[pos] == k, then map_stride[k] = out_stride[pos]
-//    std::vector<int> map_stride(ndims);
-//    for (int k = 0; k < ndims; ++k) {
-//        for (int pos = 0; pos < ndims; ++pos) {
-//            if ((int)axes[pos] == k) {
-//                map_stride[k] = out_stride[pos];
-//                break;
-//            }
-//        }
-//    }
-//
-//    // 5) Now walk the entire array by input-linear index and scatter into output.
-//    //    We parallelize the outer loop so threads write to disjoint outputs.
-//    #pragma omp for schedule(static)
-//    for (int lin = 0; lin < N; ++lin) {
-//        // a) decode linear index "lin" → multi-index idx[k]
-//        int tmp = lin;
-//        // we'll keep these on the stack
-//        int idx_stack[16];  // FIXME !DANGER!: support up to, say, 16 dims; expand if needed
-//        for (int k = 0; k < ndims; ++k) {
-//            idx_stack[k] = tmp / in_stride[k];
-//            tmp %= in_stride[k];
-//        }
-//
-//        // b) compute output linear index = sum_k idx[k] * map_stride[k]
-//        int out_lin = 0;
-//        for (int k = 0; k < ndims; ++k) {
-//            out_lin += idx_stack[k] * map_stride[k];
-//        }
-//
-//        // c) do the move
-//        output[out_lin] = input[lin];
-//    }
-//}
-//
-//
-//
-//
-//void FeatureMap::painfully_do_every_operation(const float* __restrict input, float* __restrict output, bool reverse) const
-//{
-//
-//    // ping-pong between using *output and *temp_float_buffer
-//    const float* current_in = input;
-//    float* current_out = output;
-//    bool current_out_is_temp = false;
-//    // temp is the temp_float_buffer
-//
-//    if(!reverse) {
-//        // stores the shape while we're manipulating it
-//        // copy the shape from pinfo into a proper vector
-//        std::vector<int> current_shape(pinfo->raw_shape.size());
-//        for (const auto &shape : pinfo->raw_shape) {
-//            current_shape[shape.first] = shape.second;
-//        }
-//        std::vector<int> next_shape(current_shape.size());
-//
-//        //std::cout << "<F> Initial current shape: ";
-//        //for (const auto& dim : current_shape) {
-//        //    std::cout << dim << " ";
-//        //}
-//        //std::cout << std::endl;
-//
-//        // first do all transpose and reshape operations ONLY
-//        for (size_t i = 0; i < pinfo->shape_shift_info.folded_optype.size(); i++) {
-//            const std::string &optype = pinfo->shape_shift_info.folded_optype[i];
-//            const std::vector<int> &opshape = pinfo->shape_shift_info.folded_opshape[i];
-//
-//            if(optype == "transpose") {
-//
-//                // get 'folded_opshape' vector at the current index i
-//                std::vector<int> opshape = pinfo->shape_shift_info.folded_opshape[i];
-//                int ndims = opshape.size();
-//
-//                //std::cout << "<F> Transposing with opshape: ";
-//                //for (const auto& dim : opshape) {
-//                //    std::cout << dim << " ";
-//                //}
-//                //std::cout << std::endl;
-//
-//                transpose_any(current_in, current_out, current_shape, opshape, ndims);
-//
-//                // update output
-//                if(current_out_is_temp) {
-//                    current_in = temp_float_buffer;
-//                    current_out = output;
-//                }
-//                else {
-//                    current_in = output;
-//                    current_out = temp_float_buffer;
-//                }
-//                current_out_is_temp = !current_out_is_temp;
-//
-//                // set the next_shape to the transposed shape, by copying the opshape
-//                // and moving the elements around accordingly
-//                next_shape.resize(current_shape.size());
-//                for (int j = 0; j < ndims; ++j) {
-//                    next_shape[j] = current_shape[opshape[j]];
-//                }
-//
-//                // then set current_shape to next_shape and clear next_shape
-//                current_shape = next_shape;
-//                next_shape.clear();
-//
-//                //std::cout << "<F> Current shape after transpose: ";
-//                //for (const auto& dim : current_shape) {
-//                //    std::cout << dim << " ";
-//                //}
-//                //std::cout << std::endl;
-//            }
-//            else if(optype == "reshape") {
-//
-//                // get 'folded_opshape' vector at the current index i
-//                std::vector<int> opshape = pinfo->shape_shift_info.folded_opshape[i];
-//                int ndims = opshape.size();
-//
-//                // check if the opshape is valid
-//                if (opshape.size() != current_shape.size()) {
-//                    throw std::runtime_error("<F> Invalid reshape operation: shape mismatch");
-//                }
-//
-//                // set next_shape to the opshape
-//                next_shape = opshape;
-//
-//                // then set current_shape to next_shape and clear next_shape
-//                current_shape = next_shape;
-//                next_shape.clear();
-//            }
-//        }
-//
-//        // then do all add operations ONLY
-//        for (size_t i = 0; i < pinfo->shape_shift_info.add.size(); i++) {
-//            // get the index from the shape_shift_info.add vector, and
-//            // add a singleton dimention to the current_shape
-//            int add_index = pinfo->shape_shift_info.add[i];
-//
-//            //std::cout << "<F> Adding singleton dimension at index: " << add_index << std::endl;
-//
-//            // add a singleton dimension at the add_index]
-//            next_shape.resize(current_shape.size() + 1);
-//            for (int j = 0; j < (int)current_shape.size() + 1; j++) {
-//                if (j < add_index) {
-//                    next_shape[j] = current_shape[j];
-//                }
-//                else if (j == add_index) {
-//                    next_shape[j] = 1; // singleton dimension
-//                }
-//                else {
-//                    next_shape[j] = current_shape[j - 1];
-//                }
-//            }
-//
-//            // then set current_shape to next_shape and clear next_shape
-//            current_shape = next_shape;
-//            next_shape.clear();
-//
-//            //std::cout << "<F> Current shape after add: ";
-//            //for (const auto& dim : current_shape) {
-//            //    std::cout << dim << " ";
-//            //}
-//            //std::cout << std::endl;
-//
-//        }
-//
-//        // then do all sub operations ONLY
-//        for (size_t i = 0; i < pinfo->shape_shift_info.remove.size(); i++) {
-//            // get the index from the shape_shift_info.remove vector, and
-//            // remove the dimension at that index from the current_shape
-//            int remove_index = pinfo->shape_shift_info.remove[i];
-//
-//            //std::cout << "<F> Removing dimension at index: " << remove_index << std::endl;
-//
-//            // remove the dimension at the remove_index
-//            next_shape.resize(current_shape.size() - 1);
-//            for (int j = 0; j < (int)current_shape.size(); j++) {
-//                if (j < remove_index) {
-//                    next_shape[j] = current_shape[j];
-//                }
-//                else if (j > remove_index) {
-//                    next_shape[j - 1] = current_shape[j];
-//                }
-//            }
-//
-//            // then set current_shape to next_shape and clear next_shape
-//            current_shape = next_shape;
-//            next_shape.clear();
-//
-//            //std::cout << "<F> Current shape after remove: ";
-//            //for (const auto& dim : current_shape) {
-//            //    std::cout << dim << " ";
-//            //}
-//            //std::cout << std::endl;
-//
-//        }
-//
-//        // sanity check: current_shape should be the same as [dim_h, dim_w, dim_z, dim_c]
-//        if(current_shape.size() != 4 ||
-//                current_shape[0] != dim_h || current_shape[1] != dim_w ||
-//                current_shape[2] != dim_z || current_shape[3] != (int) dim_c) {
-//
-//            std::cerr << "<F> Current shape: ";
-//            for (const auto &dim : current_shape) {
-//                std::cerr << dim << " ";
-//            }
-//            std::cerr << std::endl;
-//            std::cerr << "<F> Expected shape: " << dim_h << " " << dim_w << " " << dim_z << " " << dim_c << std::endl;
-//
-//            throw std::runtime_error("<F> Invalid final shape after all operations");
-//        }
-//
-//    }
-//    else {
-//        // stores the shape while we're manipulating it
-//        // copy the shape from pinfo into a proper vector
-//        std::vector<int> current_shape(4);
-//        current_shape[0] = dim_h;
-//        current_shape[1] = dim_w;
-//        current_shape[2] = dim_z;
-//        current_shape[3] = (int) dim_c;
-//
-//        std::vector<int> next_shape(current_shape.size());
-//
-//        //std::cout << "(R) Initial current shape: ";
-//        //for (const auto& dim : current_shape) {
-//        //    std::cout << dim << " ";
-//        //}
-//        //std::cout << std::endl;
-//
-//
-//        // first do all add operations
-//        for (size_t i = 0; i < pinfo->shape_shift_info.add.size(); i++) {
-//            // get the index from the shape_shift_info.add vector, and
-//            // add a singleton dimention to the current_shape
-//            int add_index = pinfo->shape_shift_info.add[i];
-//
-//            //std::cout << "(R) Adding singleton dimension at index: " << add_index << std::endl;
-//
-//            // add a singleton dimension at the add_index]
-//            next_shape.resize(current_shape.size() + 1);
-//            for (int j = 0; j < (int)current_shape.size() + 1; j++) {
-//                if (j < add_index) {
-//                    next_shape[j] = current_shape[j];
-//                }
-//                else if (j == add_index) {
-//                    next_shape[j] = 1; // singleton dimension
-//                }
-//                else {
-//                    next_shape[j] = current_shape[j - 1];
-//                }
-//            }
-//
-//            // then set current_shape to next_shape and clear next_shape
-//            current_shape = next_shape;
-//            next_shape.clear();
-//
-//            //std::cout << "(R) Current shape after add: ";
-//            //for (const auto& dim : current_shape) {
-//            //    std::cout << dim << " ";
-//            //}
-//            //std::cout << std::endl;
-//        }
-//
-//        // then do all sub operations ONLY
-//        for (size_t i = 0; i < pinfo->shape_shift_info.remove.size(); i++) {
-//            // get the index from the shape_shift_info.remove vector, and
-//            // remove the dimension at that index from the current_shape
-//            int remove_index = pinfo->shape_shift_info.remove[i];
-//
-//            //std::cout << "(R) Removing dimension at index: " << remove_index << std::endl;
-//
-//            // remove the dimension at the remove_index
-//            next_shape.resize(current_shape.size() - 1);
-//            for (int j = 0; j < (int)current_shape.size(); j++) {
-//                if (j < remove_index) {
-//                    next_shape[j] = current_shape[j];
-//                }
-//                else if (j > remove_index) {
-//                    next_shape[j - 1] = current_shape[j];
-//                }
-//            }
-//
-//            // then set current_shape to next_shape and clear next_shape
-//            current_shape = next_shape;
-//            next_shape.clear();
-//
-//            //std::cout << "(R) Current shape after remove: ";
-//            //for (const auto& dim : current_shape) {
-//            //    std::cout << dim << " ";
-//            //}
-//            //std::cout << std::endl;
-//
-//        }
-//
-//        // finally do all transpose and reshape operations
-//        for (size_t i = 0; i < pinfo->shape_shift_info.folded_optype.size(); i++) {
-//            const std::string &optype = pinfo->shape_shift_info.folded_optype[i];
-//            const std::vector<int> &opshape = pinfo->shape_shift_info.folded_opshape[i];
-//
-//            if(optype == "transpose") {
-//
-//                // get 'folded_opshape' vector at the current index i
-//                std::vector<int> opshape = pinfo->shape_shift_info.folded_opshape[i];
-//                int ndims = opshape.size();
-//
-//                //std::cout << "(R) Transposing with opshape: ";
-//                //for (const auto& dim : opshape) {
-//                //    std::cout << dim << " ";
-//                //}
-//                //std::cout << std::endl;
-//
-//                transpose_any(current_in, current_out, current_shape, opshape, ndims);
-//
-//                // update output
-//                if(current_out_is_temp) {
-//                    current_in = temp_float_buffer;
-//                    current_out = output;
-//                }
-//                else {
-//                    current_in = output;
-//                    current_out = temp_float_buffer;
-//                }
-//                current_out_is_temp = !current_out_is_temp;
-//
-//                // set the next_shape to the transposed shape, by copying the opshape
-//                // and moving the elements around accordingly
-//                next_shape.resize(current_shape.size());
-//                for (int j = 0; j < ndims; ++j) {
-//                    next_shape[j] = current_shape[opshape[j]];
-//                }
-//
-//                // then set current_shape to next_shape and clear next_shape
-//                current_shape = next_shape;
-//                next_shape.clear();
-//
-//                //std::cout << "(R) Current shape after transpose: ";
-//                //for (const auto& dim : current_shape) {
-//                //    std::cout << dim << " ";
-//                //}
-//                //std::cout << std::endl;
-//            }
-//            else if(optype == "reshape") {
-//
-//                // get 'folded_opshape' vector at the current index i
-//                std::vector<int> opshape = pinfo->shape_shift_info.folded_opshape[i];
-//                int ndims = opshape.size();
-//
-//                // check if the opshape is valid
-//                if (opshape.size() != current_shape.size()) {
-//                    throw std::runtime_error("(R) Invalid reshape operation: shape mismatch");
-//                }
-//
-//                // set next_shape to the opshape
-//                next_shape = opshape;
-//
-//                // then set current_shape to next_shape and clear next_shape
-//                current_shape = next_shape;
-//                next_shape.clear();
-//            }
-//        }
-//
-//        // sanity check: current_shape should be the same as [dim_h, dim_w, dim_z, dim_c]
-//        if(current_shape.size() != pinfo->raw_shape.size() ||
-//                current_shape[0] != pinfo->raw_shape[0] ||
-//                current_shape[1] != pinfo->raw_shape[1] ||
-//                current_shape[2] != pinfo->raw_shape[2] ||
-//                current_shape[3] != pinfo->raw_shape[3]) {
-//
-//            std::cerr << "(R) Current shape: ";
-//            for (const auto &dim : current_shape) {
-//                std::cerr << dim << " ";
-//            }
-//            std::cerr << std::endl;
-//            std::cerr << "(R) Expected shape: " << dim_h << " " << dim_w << " " << dim_z << " " << dim_c << std::endl;
-//
-//            throw std::runtime_error("(R) Invalid final shape after all operations");
-//        }
-//
-//
-//    }
-//
-//    // finally, if current_out is temp_float_buffer, we need to copy it back to *output,
-//    // which is the final output
-//    if(current_out_is_temp) {
-//        std::memcpy(output, temp_float_buffer, featureMap_size * sizeof(float));
-//    }
-//    else {
-//        // else the data is already in *output
-//    }
-//
-//}
 
 void* FeatureMap::get_data_ptr()
 {
@@ -1479,12 +983,12 @@ void FeatureMap::set_out_ready(bool flag)
     out_ready.store(flag);
 }
 
-bool FeatureMap::get_out_ready()
+bool FeatureMap::get_out_ready() const
 {
     return out_ready.load();
 }
 
-bool FeatureMap::get_in_ready()
+bool FeatureMap::get_in_ready() const
 {
     return in_ready.load();
 }

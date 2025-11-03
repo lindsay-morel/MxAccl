@@ -12,6 +12,7 @@
 #include <memx/accl/MxAccl.h>
 #include <memx/accl/dfp.h>
 #include <memx/accl/messages.h>
+#include <memx/accl/utils/macros.h>
 
 #include <memx/memx.h>
 
@@ -335,12 +336,13 @@ PYBIND11_MODULE(mxapi, m) {
 
     //  Device Info device_info_t
     py::class_<MX::RPC::device_info_t>(m, "device_info_t")
-        .def(py::init<int32_t, int32_t, int32_t, int32_t, bool, std::vector<uint16_t>, uint16_t>())
+        .def(py::init<int32_t, int32_t, int32_t, int32_t, bool, bool, std::vector<uint16_t>, uint16_t>())
         .def_readwrite("chip_count", &MX::RPC::device_info_t::chip_count)
         .def_readwrite("current_config", &MX::RPC::device_info_t::current_config)
         .def_readwrite("num_groups", &MX::RPC::device_info_t::num_groups)
         .def_readwrite("chips_per_group", &MX::RPC::device_info_t::chips_per_group)
         .def_readwrite("can_get_power_data", &MX::RPC::device_info_t::can_get_power_data)
+        .def_readwrite("is_usb", &MX::RPC::device_info_t::is_usb)
         .def_readwrite("freqs", &MX::RPC::device_info_t::freqs)
         .def_readwrite("volt", &MX::RPC::device_info_t::volt)
         .def("__getitem__", [](const MX::RPC::device_info_t &self, const std::string &key) -> py::object {
@@ -374,6 +376,34 @@ PYBIND11_MODULE(mxapi, m) {
             py::arg("server_address") = "/run/mxa_manager/",
             py::arg("base_port") = 10000)
         .def("end_connection", &MX::Runtime::Client::end_connection)
+        .def("get_avg_max_temp", &MX::Runtime::Client::get_avg_max_temp,
+            py::arg("device_id"))
+        .def("get_inst_max_temp", &MX::Runtime::Client::get_inst_max_temp,
+            py::arg("device_id"))
+        .def("get_avg_power", &MX::Runtime::Client::get_avg_power,
+            py::arg("device_id"))
+        .def("get_inst_power", &MX::Runtime::Client::get_inst_power,
+            py::arg("device_id"))
+        .def("set_power_mode", &MX::Runtime::Client::set_power_mode,
+            py::arg("device_id"),
+            py::arg("freq_mhz"))
+        .def("get_pressure", [](
+                // wrapper to return pressure as string "low", "medium", "high", "full"
+                // instead of a float number
+                MX::Runtime::Client& self,
+                int32_t device_id) {
+                    float pressure = self.get_pressure(device_id);
+                    if (pressure < MEMX_PRESSURE_LOW_THRESH) {
+                        return std::string("low");
+                    } else if (pressure < MEMX_PRESSURE_MEDIUM_THRESH) {
+                        return std::string("medium");
+                    } else if (pressure < MEMX_PRESSURE_HIGH_THRESH) {
+                        return std::string("high");
+                    } else {
+                        return std::string("full");
+                    }
+            },
+            py::arg("device_id"))
         .def("try_local_lock", &MX::Runtime::Client::try_local_lock,
             py::arg("device_id"))
         .def("local_unlock", &MX::Runtime::Client::local_unlock,
@@ -402,4 +432,9 @@ PYBIND11_MODULE(mxapi, m) {
             py::arg("client_options"),
             py::arg("devices_to_use"))
         .def_readwrite("my_client_id", &MX::Runtime::Client::my_client_id);
+
+    // expose the MEMX_PRESSURE_* constants
+    m.attr("MEMX_PRESSURE_LOW_THRESH") = MEMX_PRESSURE_LOW_THRESH;
+    m.attr("MEMX_PRESSURE_MEDIUM_THRESH") = MEMX_PRESSURE_MEDIUM_THRESH;
+    m.attr("MEMX_PRESSURE_HIGH_THRESH") = MEMX_PRESSURE_HIGH_THRESH;
 }

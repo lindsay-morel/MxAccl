@@ -20,7 +20,7 @@ message(STATUS "MX_API_DIR  set to " ${MX_API_DIR})
 get_filename_component(MX_API_BUILD_DIR "build" REALPATH)
 message(STATUS "MX_API_BUILD_DIR  set to " ${MX_API_BUILD_DIR})
 
-set(CMAKE_COMMON_CFLAGS "-Wall -Wextra -pipe -fPIC -g -O2 -fvect-cost-model=dynamic -fno-math-errno -funsafe-math-optimizations -ffinite-math-only -fno-signed-zeros -fno-trapping-math -fno-signaling-nans -fcx-limited-range -fopenmp -Wno-unused-variable -Wno-alloc-size-larger-than")
+set(CMAKE_COMMON_CFLAGS "-Wall -Wextra -pipe -fPIC -O2 -fvect-cost-model=dynamic -fsimd-cost-model=unlimited -floop-unroll-and-jam -ftree-loop-if-convert -ftree-loop-im -ftree-loop-ivcanon -funswitch-loops -fgcse-after-reload -fipa-cp-clone -ftree-loop-distribution -ftree-partial-pre -fsplit-paths -fpredictive-commoning -fno-math-errno -funsafe-math-optimizations -ffinite-math-only -fno-signed-zeros -fno-trapping-math -fno-signaling-nans -fcx-limited-range -fopenmp -Wno-unused-variable -Wno-alloc-size-larger-than")
 
 set(CMAKE_X86_FLAGS_BASE "-mpopcnt -msse -msse2 -msse3 -mssse3 -msse4.1 -msse4.2 -mfxsr -mcx16 -msahf -mpclmul -mfsgsbase -mmovbe -mprfchw -mxsave -mxsaveopt -mtune=generic")
 if(NO_AVX)
@@ -36,16 +36,19 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE "${BUILD_TYPE}" CACHE STRING "Choose the type of build." FORCE)
 endif()
 
+
 if(CMAKE_BUILD_TYPE MATCHES "Debug")
 #if(CMAKE_BUILD_TYPE MATCHES "Packaging")
   set(
     CMAKE_C_FLAGS
-    "${CMAKE_C_FLAGS} -Wall -Wextra -fPIC -O0 -g -fopenmp -fno-omit-frame-pointer -fsanitize=address -fsanitize=leak -fsanitize=null -fsanitize=bounds -fsanitize=bounds-strict -fsanitize=pointer-overflow -Wno-unused-variable"
+    #"${CMAKE_C_FLAGS} -Wall -Wextra -fPIC -march=native -Og -g -fopenmp -fno-omit-frame-pointer -fsanitize=address -fsanitize=leak -fsanitize=null -fsanitize=bounds -fsanitize=bounds-strict -fsanitize=pointer-overflow -Wno-unused-variable"
+    "${CMAKE_C_FLAGS} -Wall -Wextra -fPIC -march=native -Og -g -fopenmp -fno-omit-frame-pointer -fsanitize=thread -Wno-error=tsan -Wno-unused-variable"
     #"${CMAKE_C_FLAGS} -Wall -Wextra -fPIC -O0 -g -fopenmp -fno-omit-frame-pointer -Wno-unused-variable"
   )
   set(
     CMAKE_CXX_FLAGS
-    "${CMAKE_CXX_FLAGS} -Wall -Wextra -fPIC -O0 -g -fopenmp -fno-omit-frame-pointer -fsanitize=address -fsanitize=leak -fsanitize=null -fsanitize=bounds -fsanitize=bounds-strict -fsanitize=pointer-overflow -Wno-unused-variable"
+    #"${CMAKE_CXX_FLAGS} -Wall -Wextra -fPIC -march=native -Og -g -fopenmp -fno-omit-frame-pointer -fsanitize=address -fsanitize=leak -fsanitize=null -fsanitize=bounds -fsanitize=bounds-strict -fsanitize=pointer-overflow -Wno-unused-variable"
+    "${CMAKE_CXX_FLAGS} -Wall -Wextra -fPIC -march=native -Og -g -fopenmp -fno-omit-frame-pointer -fsanitize=thread -Wno-error=tsan -Wno-unused-variable"
     #"${CMAKE_CXX_FLAGS} -Wall -Wextra -fPIC -O0 -g -fopenmp -fno-omit-frame-pointer -Wno-unused-variable"
   )
 else()
@@ -70,11 +73,11 @@ else()
   elseif (CMAKE_SYSTEM_PROCESSOR MATCHES "(riscv64)|(RISCV64)|(RV64)|(rv64gc)")
     set(
       CMAKE_C_FLAGS
-      "${CMAKE_C_FLAGS} ${CMAKE_COMMON_CFLAGS} -march=rv64gcv_zicntr_ziccif_ziccrse_ziccamoa_za64rs_zba_zbb_zbs_zihpm_zihintpause_zic64b_zicbom_zicbop_zicboz_zkt_zfh_zicond_zbc"
+      "${CMAKE_C_FLAGS} ${CMAKE_COMMON_CFLAGS} -march=rv64gc_zicntr_ziccif_ziccrse_ziccamoa_za64rs_zba_zbb_zbs_zihpm_zihintpause_zic64b_zicbom_zicbop_zicboz_zkt_zfh_zicond_zbc"
     )
     set(
       CMAKE_CXX_FLAGS
-      "${CMAKE_CXX_FLAGS} ${CMAKE_COMMON_CFLAGS} -march=rv64gcv_zicntr_ziccif_ziccrse_ziccamoa_za64rs_zba_zbb_zbs_zihpm_zihintpause_zic64b_zicbom_zicbop_zicboz_zkt_zfh_zicond_zbc"
+      "${CMAKE_CXX_FLAGS} ${CMAKE_COMMON_CFLAGS} -march=rv64gc_zicntr_ziccif_ziccrse_ziccamoa_za64rs_zba_zbb_zbs_zihpm_zihintpause_zic64b_zicbom_zicbop_zicboz_zkt_zfh_zicond_zbc"
     )
   endif()
 endif()

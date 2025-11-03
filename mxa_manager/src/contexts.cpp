@@ -21,6 +21,7 @@
 #include "color_print.h"
 
 using namespace MX::Manager;
+using namespace MX::Utils;
 using namespace MX::sha512;
 
 // ContextClient
@@ -28,7 +29,7 @@ using namespace MX::sha512;
 
 
 ContextClient::ContextClient(uint32_t id_, uint32_t obuffer_size_, uint32_t num_ofmaps_, uint64_t* ofmap_sizes,
-                             std::vector<uint8_t> allowed_driver_ctxs_, std::atomic_bool* alive_flag)
+                             std::vector<uint8_t> allowed_driver_ctxs_, SharedLockedVar<bool> *alive_flag)
 {
     id = id_;
 
@@ -217,7 +218,7 @@ ModelContext::~ModelContext()
 }
 
 
-ContextClient* ModelContext::add_client(uint32_t id, std::atomic_bool* alive_flag)
+ContextClient* ModelContext::add_client(uint32_t id, SharedLockedVar<bool> *alive_flag)
 {
     if(id == 0 || id == 0xDEADBEEF || alive_flag == nullptr) {
         return nullptr;
@@ -300,12 +301,9 @@ DFPContext::DFPContext(uint64_t dfp_raw_size_, uint8_t* dfp_bytes, hash_t h, uin
 
     dfp_raw_size = dfp_raw_size_;
     raw_dfp_bytes = dfp_bytes;
-    dfp_obj = new Dfp::DfpObject(raw_dfp_bytes);
-        
-    // init client count
-    client_ref_count = 0;
+    dfp_obj = new Dfp::DfpObject(raw_dfp_bytes, dfp_raw_size);
 
-    // executor ref count
+    client_ref_count = 0;
     exec_ref_count = 0;
 
     // for each device to use, create a driver ctx
@@ -416,6 +414,7 @@ void DFPContext::parse_dfp(Dfp::DfpObject* d)
     spdlog::debug("  num_used_inports: {}", m->num_used_inports);
     spdlog::debug("  num_used_outports: {}", m->num_used_outports);
     spdlog::debug("  num_models: {}", m->num_models);
+    spdlog::debug("  num_chips: {}", m->num_chips);
 
     spdlog::debug("  model_inports:");
     for (int i = 0; i < m->num_models; ++i) {
@@ -449,6 +448,8 @@ void DFPContext::parse_dfp(Dfp::DfpObject* d)
 
     // ptr to actual data
     info->dfp = d;
+    info->num_models = m->num_models;
+    info->num_chips = m->num_chips;
 
     for(int i = 0; i < info->num_models ; i++) {
 
@@ -602,8 +603,8 @@ void DFPContext::print_info()
 
 void DFPContext::print_clients()
 {
-    spdlog::debug("DFPContext {}", MX::sha512::to_base64(hash));
-    spdlog::debug("  Number of total DFP clients: {}", client_ref_count.load());
+    //spdlog::debug("DFPContext {}", MX::sha512::to_base64(hash));
+    //spdlog::debug("  Number of total DFP clients: {}", client_ref_count.load());
 
     //for (int i = 0; i < info->num_models; ++i) {
     //    spdlog::debug("  Model {}:", i);

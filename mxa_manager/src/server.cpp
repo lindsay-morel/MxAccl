@@ -35,7 +35,8 @@ namespace MX
 namespace Manager
 {
 
-Server::Server(std::string addr_, unsigned short base_port_)
+Server::Server(std::string addr_, unsigned short base_port_, unsigned int hw_monitor_interval_ms_)
+    : hw_monitor_interval_ms(hw_monitor_interval_ms_)
 {
     addr = addr_;
     base_port = base_port_;
@@ -48,8 +49,7 @@ Server::Server(std::string addr_, unsigned short base_port_)
     ifmap_listener_ptr = nullptr;
     ofmap_listener_ptr = nullptr;
 
-    running.store(true, std::memory_order_release);
-    TSAN_RELEASE(&running);
+    running = true;
 
     // count the number of connected devices
     memx_status status = memx_operation_get_device_count(&all_devices_count);
@@ -82,6 +82,7 @@ Server::Server(std::string addr_, unsigned short base_port_)
 
             if ((hwinfo64 & 0xFF) == 2) {
                 // PCIE interface
+                devinfo.is_usb = false;
                 status = memx_get_feature(i, 0, OPCODE_GET_HW_INFO, &hwinfo64);
                 if(memx_status_error(status)) {
                     spdlog::critical("[Server] Error in OPCODE_GET_HW_INFO memx_get_feature for device {}: {}", i, static_cast<int>(status));
@@ -99,7 +100,9 @@ Server::Server(std::string addr_, unsigned short base_port_)
                 }
             }
             else {
+                // USB interface
                 uint32_t data = 0;
+                devinfo.is_usb = true;
                 status = memx_get_total_chip_count(i, (uint8_t*)&data);
                 if(memx_status_error(status)) {
                     spdlog::critical("[Server] Error in  memx_get_total_chip_count for device {}: {}", i, static_cast<int>(status));
@@ -130,6 +133,9 @@ Server::Server(std::string addr_, unsigned short base_port_)
             else if (devinfo.chip_count == 2 && devinfo.num_groups == 1) {
                 devinfo.current_config = MEMX_MPU_GROUP_CONFIG_ONE_GROUP_TWO_MPUS;
             }
+            else if (devinfo.chip_count == 1 && devinfo.num_groups == 1) {
+                devinfo.current_config = MEMX_MPU_GROUP_CONFIG_ONE_GROUP_ONE_MPU;
+            }
             else {
                 // invalid configuration
                 spdlog::error("[Server] Invalid chip count {} or group count {} for device {}",
@@ -148,6 +154,7 @@ Server::Server(std::string addr_, unsigned short base_port_)
                 }
                 devinfo.freqs[j] = (uint16_t) freq & 0xFFFF;
             }
+            
             uint64_t volt = 0; // default voltage
             status = memx_get_feature(i, 0, OPCODE_GET_VOLTAGE, &volt);
             if(memx_status_error(status)) {
@@ -169,19 +176,19 @@ Server::Server(std::string addr_, unsigned short base_port_)
             devinfo_table[i] = devinfo;
         }
 
-        // print the device_info table for all devices
-        std::cout << "Device ID | Chip Count | Num Groups | is MXM2 |  Freq | Volt" << std::endl;
-        std::cout << "----------|------------|------------|---------|-------|-----" << std::endl;
-        for(uint8_t d = 0; d < all_devices_count ; d++) {
-            std::cout << std::setw(9) << int(d) << " | ";
-            std::cout << std::setw(10) << devinfo_table[d].chip_count << " | ";
-            std::cout << std::setw(10) << devinfo_table[d].num_groups << " | ";
-            std::cout << std::setw(7)  << (devinfo_table[d].can_get_power_data ? "Yes" : "No") << " | ";
-            std::cout << std::setw(5)  << devinfo_table[d].freqs[0] << " | ";
-            std::cout << std::setw(4)  << devinfo_table[d].volt;
-            std::cout << std::endl;
-        }
-        std::cout << std::endl;
+        //// print the device_info table for all devices
+        //std::cout << "Device ID | Chip Count | Num Groups | GetPwr? |  Freq | Volt" << std::endl;
+        //std::cout << "----------|------------|------------|---------|-------|-----" << std::endl;
+        //for(uint8_t d = 0; d < all_devices_count ; d++) {
+        //    std::cout << std::setw(9) << int(d) << " | ";
+        //    std::cout << std::setw(10) << devinfo_table[d].chip_count << " | ";
+        //    std::cout << std::setw(10) << devinfo_table[d].num_groups << " | ";
+        //    std::cout << std::setw(7)  << (devinfo_table[d].can_get_power_data ? "Yes" : "No") << " | ";
+        //    std::cout << std::setw(5)  << devinfo_table[d].freqs[0] << " | ";
+        //    std::cout << std::setw(4)  << devinfo_table[d].volt;
+        //    std::cout << std::endl;
+        //}
+        //std::cout << std::endl;
 
         // create executor queues and threads
         executor_queues = new BlockyQueue<ExecutorTask*>[all_devices_count];
@@ -199,7 +206,6 @@ Server::~Server()
 {
     // stop the server
     kill();
-
 }
 
 void Server::start()
@@ -213,8 +219,7 @@ void Server::start()
 
 void Server::kill()
 {
-    running.store(false, std::memory_order_release);
-    TSAN_RELEASE(&running);
+    running = false;
 
     // close all listeners
     spdlog::info("[Server] Closing all listeners...");
@@ -254,6 +259,27 @@ void Server::kill()
     // delete the queues
     delete [] executor_queues;
     executor_queues = nullptr;
+    
+    
+    spdlog::info("[Server] Stopping endpoint threads...");
+    if(ctrl_endpoint_thread != nullptr) {
+        // TODO: investigate why join() doesn't work here instead...
+        ctrl_endpoint_thread->detach();
+        delete ctrl_endpoint_thread;
+        ctrl_endpoint_thread = nullptr;
+    }
+
+    if(ifmap_endpoint_thread != nullptr) {
+        ifmap_endpoint_thread->detach();
+        delete ifmap_endpoint_thread;
+        ifmap_endpoint_thread = nullptr;
+    }
+
+    if(ofmap_endpoint_thread != nullptr) {
+        ofmap_endpoint_thread->detach();
+        delete ofmap_endpoint_thread;
+        ofmap_endpoint_thread = nullptr;
+    }
 
     spdlog::info("[Server] Server stopped successfully.");
 }
@@ -277,8 +303,7 @@ void Server::status_reply(MX::RPC::Socket* s, uint32_t client_id, MX::RPC::statu
     catch (std::exception &e) {
         spdlog::error("[Server] STATUS_REPLY to client {} exception: {}", client_id, e.what());
         std::lock_guard<std::mutex> lock(meta_lock);
-        client_meta[client_id]->alive.store(false, std::memory_order_release);
-        TSAN_ACQUIRE(&(client_meta[client_id]->alive));
+        client_meta[client_id]->alive = false;
     }
 }
 
@@ -305,8 +330,7 @@ void Server::control_endpoint_listener()
 
         spdlog::info("[CTRL] control listener running on {}:{}", addr_, port_);
 
-        while(running.load(std::memory_order_consume)) {
-            TSAN_ACQUIRE(&running);
+        while(running == true) {
             MX::RPC::Socket* socket = listener.accept();
 
             spdlog::info("[CTRL] new control connection accepted");
@@ -350,9 +374,7 @@ void Server::control_session(MX::RPC::Socket* s, ClientMeta* meta)
     size_t rbytes;
     uint32_t my_client_id = meta->id;
 
-    while(meta->alive.load(std::memory_order_consume) && running.load(std::memory_order_consume)) {
-        TSAN_ACQUIRE(&meta->alive);
-        TSAN_ACQUIRE(&running);
+    while(meta->alive == true && running == true) {
 
         // read initial header
         rbytes = s->read(mxasio::buffer(&header, sizeof(header)), error);
@@ -594,7 +616,7 @@ void Server::control_session(MX::RPC::Socket* s, ClientMeta* meta)
 
             // calculate the actual list of devices to use,
             // where -1 means "all detected devices" (need to resize the
-            // array accordingly if so) and -2 means "one device, but which one doesn't matter"
+            // array accordingly if so)
             if(msg_dfp.len_devices_to_use == 1 && msg_dfp.devices_to_use[0] == -1) {
                 msg_dfp.len_devices_to_use = all_devices_count;
                 delete [] msg_dfp.devices_to_use;
@@ -613,6 +635,36 @@ void Server::control_session(MX::RPC::Socket* s, ClientMeta* meta)
                 }
             }
 
+            // validate args for DFPContext
+            // NOTE: require doing this before init or reuse DFPContext
+            std::vector<uint8_t> device_ctxs_allowed;
+            if(msg_dfp.len_devices_to_use == 1 && msg_dfp.devices_to_use[0] < 0) {
+                // -1 means unrestricted, so allow all devices
+                for(int i = 0; i < all_devices_count; i++) {
+                    device_ctxs_allowed.push_back(i);
+                }
+            }
+            else {
+                // otherwise, just use the devices_to_use list
+                for(int i = 0; i < msg_dfp.len_devices_to_use; i++) {
+                    if(msg_dfp.devices_to_use[i] >= 0 && msg_dfp.devices_to_use[i] < all_devices_count) {
+                        device_ctxs_allowed.push_back(msg_dfp.devices_to_use[i]);
+                    }
+                    else {
+                        spdlog::warn("[CTRL] client {} tried to use invalid device {}", my_client_id, msg_dfp.devices_to_use[i]);
+                    }
+                }
+            }
+
+            // check at least one valid device before trying to create the DFPContext
+            if(device_ctxs_allowed.empty()) {
+                spdlog::error("[CTRL] Client {} did not specify any valid devices for DFP context creation.", my_client_id);
+                msg_status.s = MX::RPC::DFP_NO_VALID_CONTEXTS;
+                msg_status.dat = 0;
+                status_reply(s, my_client_id, msg_status.s, msg_status.dat);
+                break;
+            }
+
             // generate a sha512 of the dfp bytes, and use this to see if this DFP is
             // already present in the dfp_contexts map
             MX::sha512::hash_t hash = MX::sha512::compute(msg_dfp.dfp_bytes, msg_dfp.num_dfp_bytes);
@@ -622,7 +674,7 @@ void Server::control_session(MX::RPC::Socket* s, ClientMeta* meta)
                 if(dfp_contexts.count(hash) > 0) {
                     // double check the hash is unique by doing a full mem compare
                     uint8_t* existing_bytes = dfp_contexts[hash]->raw_dfp_bytes;
-                    if(std::memcmp(existing_bytes, msg_dfp.dfp_bytes, msg_dfp.num_dfp_bytes) != 0) {
+                    if(UNLIKELY(std::memcmp(existing_bytes, msg_dfp.dfp_bytes, msg_dfp.num_dfp_bytes) != 0)) {
                         // wow, this is a very rare collision...
                         lock.unlock(); // dont need the lock during client reply
                         spdlog::error("[CTRL] DFP SHA512 collision for {}", MX::sha512::to_base64(hash));
@@ -639,8 +691,6 @@ void Server::control_session(MX::RPC::Socket* s, ClientMeta* meta)
                         // we have a match, so just use the existing DFPContext
                         dfp = dfp_contexts[hash];
                         dfp->client_ref_count++;
-                        TSAN_ACQUIRE(&(dfp->client_ref_count));
-                        TSAN_RELEASE(&(dfp->client_ref_count));
                         meta->my_dfp_context = dfp;
                         meta->client_options.smoothing = (bool) msg_dfp.smoothing;
                         meta->client_options.fps_target = msg_dfp.fps_target;
@@ -659,8 +709,6 @@ void Server::control_session(MX::RPC::Socket* s, ClientMeta* meta)
                             delete [] msg_dfp.devices_to_use;
                             msg_dfp.devices_to_use = nullptr;
                             meta->my_dfp_context->client_ref_count--;
-                            TSAN_ACQUIRE(&(meta->my_dfp_context->client_ref_count));
-                            TSAN_RELEASE(&(meta->my_dfp_context->client_ref_count));
                             meta->my_dfp_context = nullptr;
 
                             lock.unlock();
@@ -707,26 +755,6 @@ void Server::control_session(MX::RPC::Socket* s, ClientMeta* meta)
                 }
                 else {
                     // create a new DFPContext
-
-                    std::vector<uint8_t> device_ctxs_allowed;
-                    if(msg_dfp.len_devices_to_use == 1 && msg_dfp.devices_to_use[0] < 0) {
-                        // -1 means unrestricted, so allow all devices
-                        for(int i = 0; i < all_devices_count; i++) {
-                            device_ctxs_allowed.push_back(i);
-                        }
-                    }
-                    else {
-                        // otherwise, just use the devices_to_use list
-                        for(int i = 0; i < msg_dfp.len_devices_to_use; i++) {
-                            if(msg_dfp.devices_to_use[i] >= 0 && msg_dfp.devices_to_use[i] < all_devices_count) {
-                                device_ctxs_allowed.push_back(msg_dfp.devices_to_use[i]);
-                            }
-                            else {
-                                spdlog::warn("[CTRL] client {} tried to use invalid device {}", my_client_id, msg_dfp.devices_to_use[i]);
-                            }
-                        }
-                    }
-
                     dfp = new DFPContext(msg_dfp.num_dfp_bytes, msg_dfp.dfp_bytes, hash, msg_dfp.ifmap_queue_size, msg_dfp.ofmap_queue_size, device_ctxs_allowed);
 
                     if(dfp->successful_init == false) {
@@ -734,13 +762,12 @@ void Server::control_session(MX::RPC::Socket* s, ClientMeta* meta)
                         msg_status.s = MX::RPC::DFP_TOO_MANY_OPEN_CONTEXTS;
                         msg_status.dat = 32;
 
-                        delete [] msg_dfp.dfp_bytes;
-                        msg_dfp.dfp_bytes = nullptr;
                         delete [] msg_dfp.devices_to_use;
                         msg_dfp.devices_to_use = nullptr;
 
                         delete dfp;
                         dfp = nullptr;
+                        msg_dfp.dfp_bytes = nullptr; // cleared by DFPContext destructor
                         meta->my_dfp_context = nullptr;
                         
                         lock.unlock();
@@ -764,18 +791,15 @@ void Server::control_session(MX::RPC::Socket* s, ClientMeta* meta)
                                      dfp->info->num_models);
                         msg_status.s = MX::RPC::DFP_SUBMODEL_ID_OUT_OF_BOUNDS;
                         msg_status.dat = 0;
-                        delete [] msg_dfp.dfp_bytes;
-                        msg_dfp.dfp_bytes = nullptr;
                         delete [] msg_dfp.devices_to_use;
                         msg_dfp.devices_to_use = nullptr;
 
                         // remove this DFPContext since we were the only one going to use it
-                        dfp->client_ref_count--;
-                        if(dfp->client_ref_count.load() <= 0) {
-                            dfp_contexts.erase(hash);
-                            delete dfp;
-                            dfp = nullptr;
-                        }
+                        dfp_contexts.erase(hash);
+                        delete dfp;
+                        dfp = nullptr;
+                        msg_dfp.dfp_bytes = nullptr; // cleared by DFPContext destructor
+                        
                         meta->my_dfp_context = nullptr;
 
                         lock.unlock();
@@ -784,6 +808,43 @@ void Server::control_session(MX::RPC::Socket* s, ClientMeta* meta)
                         break;
                     }
                     else {
+
+                        // also check the num chips matches all devices_to_use num chips
+                        int expected_chip_cnt = dfp->info->num_chips;
+                        std::shared_lock<std::shared_mutex> devlock(devinfo_lock);
+                        msg_status.s = MX::RPC::OK;
+                        for(int i = 0; i < msg_dfp.len_devices_to_use; i++) {
+                            int dev_id = msg_dfp.devices_to_use[i];
+                            if(devinfo_table[dev_id].chip_count != expected_chip_cnt) {
+                                spdlog::warn("[CTRL] client {} tried to submit a DFP whose chip count {} doesn't match device {}'s chip count {}",
+                                             my_client_id, expected_chip_cnt, dev_id, devinfo_table[dev_id].chip_count);
+                                msg_status.s = MX::RPC::DFP_WRONG_NUMBER_OF_CHIPS;
+                                msg_status.dat = 0;
+                                delete [] msg_dfp.devices_to_use;
+                                msg_dfp.devices_to_use = nullptr;
+
+                                // remove this DFPContext since we were the only one going to use it
+                                dfp_contexts.erase(hash);
+                                delete dfp;
+                                dfp = nullptr;
+                                msg_dfp.dfp_bytes = nullptr; // cleared by DFPContext destructor
+
+                                meta->my_dfp_context = nullptr;
+
+                                devlock.unlock();
+                                lock.unlock();
+
+                                status_reply(s, my_client_id, msg_status.s, msg_status.dat);
+                                break;
+                            }
+                        }
+                        // check for fail in inner loop
+                        if(msg_status.s == MX::RPC::DFP_WRONG_NUMBER_OF_CHIPS) {
+                            break;
+                        }
+
+                        // else we're good
+                        devlock.unlock();
                         lock.unlock();
                     }
 
@@ -827,9 +888,8 @@ void Server::control_session(MX::RPC::Socket* s, ClientMeta* meta)
                         // scheduler options
                         task->frame_limit = msg_dfp.frame_limit;
                         task->time_limit = msg_dfp.time_limit;
-                        task->stop_on_empty = msg_dfp.stop_on_empty;
 
-                        task->dfp_ctx->exec_ref_count++; // no lock needed here, since we are the only thread modifying this
+                        task->dfp_ctx->exec_ref_count++;
                         scheduler_queue.push(task);
 
                     }
@@ -843,12 +903,8 @@ void Server::control_session(MX::RPC::Socket* s, ClientMeta* meta)
                             // scheduler options
                             task->frame_limit = msg_dfp.frame_limit;
                             task->time_limit = msg_dfp.time_limit;
-                            task->stop_on_empty = msg_dfp.stop_on_empty;
 
-                            {
-                                std::lock_guard<std::mutex> xlock(task->dfp_ctx->exec_ref_count_lock);
-                                task->dfp_ctx->exec_ref_count++;
-                            }
+                            task->dfp_ctx->exec_ref_count++;
                             scheduler_queue.push(task);
                         }
                     }
@@ -1038,6 +1094,140 @@ void Server::control_session(MX::RPC::Socket* s, ClientMeta* meta)
 
 
         }
+        
+        // PRESSURE REQUEST PACKET
+        //-------------------------------------------------------------------------------
+        else if(header.msg_type == MX::RPC::MSG_TYPE_GET_UTILIZATION) {
+            // check for client ID mismatch
+            if(header.client_id != my_client_id) {
+                spdlog::warn("[CTRL] client {} tried to GET_DEVICE_INFO with ID {}", header.client_id, my_client_id);
+                msg_status.s = MX::RPC::YOU_LIED_ABOUT_YOUR_ID;
+                msg_status.dat = 0;
+                status_reply(s, my_client_id, msg_status.s, msg_status.dat);
+                break;
+            }
+
+            // read the device_id
+            int32_t device_id = -1;
+            rbytes = s->read(mxasio::buffer(&device_id, sizeof(int32_t)), error);
+            if(UNLIKELY(rbytes == 0 || error)) {
+                spdlog::error("[CTRL] control connection from {} error: {}", s->remote_endpoint(), error.message());
+                break;
+            }
+
+            if(UNLIKELY(device_id < 0 || device_id >= all_devices_count)) {
+                spdlog::warn("[CTRL] client {} tried to GET_PRESSURE with invalid device ID {}", header.client_id, device_id);
+                msg_status.s = MX::RPC::INVALID_DEVICE;
+                msg_status.dat = 0;
+                status_reply(s, my_client_id, msg_status.s, msg_status.dat);
+                continue;
+            }
+            else {
+
+                DFPExecutor* exe = nullptr;
+                {
+                    std::shared_lock<std::shared_mutex> extlock(m_executor_table);
+                    if(all_dfp_executors.count(device_id) == 0) {
+                        spdlog::warn("[CTRL] client {} tried to GET_PRESSURE for device {} but it is not in the executor table", header.client_id, device_id);
+                        msg_status.s = MX::RPC::INVALID_DEVICE;
+                        msg_status.dat = 0;
+                        status_reply(s, my_client_id, msg_status.s, msg_status.dat);
+                        continue;
+                    }
+                    else {
+                        exe = all_dfp_executors[device_id];
+                    }
+                    extlock.unlock();
+                }
+
+                // check if the device is locked in the lock table
+                uint32_t owner_id = 0xDEADBEEF;
+                if(LIKELY(lock_table.check_lock(device_id, &owner_id))) {
+                    if(UNLIKELY(owner_id != 0)) {
+                        // this is owned by another client, so we cannot get the temp/power
+                        spdlog::warn("[CTRL] client {} tried to GET_PRESSURE for device {} but it is in Local mode and owned by client {}",
+                                     header.client_id, device_id, owner_id);
+                        msg_status.s = MX::RPC::INFO_DEVICE_IS_LOCAL_LOCKED;
+                        msg_status.dat = 0;
+                        status_reply(s, my_client_id, msg_status.s, msg_status.dat);
+                        continue;
+                    }
+                }
+
+                float val = exe->avg_pressure();
+                // send the reply
+                msg_status.s = MX::RPC::OK;
+                memcpy(&(msg_status.dat), &val, sizeof(float));
+                status_reply(s, my_client_id, msg_status.s, msg_status.dat);
+
+            }
+        }
+        
+
+        // SET POWERMODE REQUEST
+        //-------------------------------------------------------------------------------
+        else if(header.msg_type == MX::RPC::MSG_TYPE_SET_POWERMODE) {
+            // check for client ID mismatch
+            if(header.client_id != my_client_id) {
+                spdlog::warn("[CTRL] client {} tried to SET_POWERMODE with ID {}", header.client_id, my_client_id);
+                msg_status.s = MX::RPC::YOU_LIED_ABOUT_YOUR_ID;
+                msg_status.dat = 0;
+                status_reply(s, my_client_id, msg_status.s, msg_status.dat);
+                break;
+            }
+
+            // read the device_id
+            int32_t device_id = -1;
+            rbytes = s->read(mxasio::buffer(&device_id, sizeof(int32_t)), error);
+            if(UNLIKELY(rbytes == 0 || error)) {
+                spdlog::error("[CTRL] control connection from {} error: {}", s->remote_endpoint(), error.message());
+                break;
+            }
+
+            // read the requested frequency
+            uint16_t req_freq = 0;
+            rbytes = s->read(mxasio::buffer(&req_freq, sizeof(uint16_t)), error);
+            if(UNLIKELY(rbytes == 0 || error)) {
+                spdlog::error("[CTRL] control connection from {} error: {}", s->remote_endpoint(), error.message());
+                break;
+            }
+
+            // validate that the req_freq frequency is an option in the MxFrequencyOption enum
+            if(UNLIKELY(MX::Types::is_valid_frequency_option(req_freq) == false)) {
+                spdlog::warn("[CTRL] client {} tried to SET_POWERMODE with invalid frequency option {}", header.client_id, req_freq);
+                msg_status.s = MX::RPC::SET_POWERMODE_INVALID_OPTION;
+                msg_status.dat = 0;
+                status_reply(s, my_client_id, msg_status.s, msg_status.dat);
+                continue;
+            }
+
+            // set the next power mode for the device
+            MX::Types::MxFrequencyOption freq_option = static_cast<MX::Types::MxFrequencyOption>(req_freq);
+            DFPExecutor* exe = nullptr;
+            {
+                std::shared_lock<std::shared_mutex> extlock(m_executor_table);
+                if(all_dfp_executors.count(device_id) == 0) {
+                    extlock.unlock();
+                    spdlog::warn("[CTRL] client {} tried to SET_POWERMODE for device {} but it is not in the executor table", header.client_id, device_id);
+                    msg_status.s = MX::RPC::INVALID_DEVICE;
+                    msg_status.dat = 0;
+                    status_reply(s, my_client_id, msg_status.s, msg_status.dat);
+                    continue;
+                }
+                else {
+                    exe = all_dfp_executors[device_id];
+            
+                    exe->set_next_power_mode(freq_option);
+                    extlock.unlock();
+
+                    // reply success
+                    msg_status.s = MX::RPC::OK;
+                    msg_status.dat = 0;
+                    status_reply(s, my_client_id, msg_status.s, msg_status.dat);
+                }
+            }
+
+        }
 
         // DEV INFO REQUESTS
         //-------------------------------------------------------------------------------
@@ -1133,6 +1323,9 @@ void Server::control_session(MX::RPC::Socket* s, ClientMeta* meta)
 
 
         }
+        
+        // INVALID COMMAND
+        //-------------------------------------------------------------------------------
         else {
             // invalid! send back an invalid command error
             spdlog::warn("[CTRL] client {} sent invalid command type {}", my_client_id, static_cast<uint32_t>(header.msg_type));
@@ -1150,8 +1343,7 @@ void Server::control_session(MX::RPC::Socket* s, ClientMeta* meta)
 
 cleanup:
     // extra sanity check to remove dangling IDs
-    meta->alive.store(false, std::memory_order_release);
-    TSAN_RELEASE(&(meta->alive));
+    meta->alive = false;
 
     // for all ofmap_queues and ofmap_freelists in my meta->client_context,
     // do a .notify() to wake up any threads waiting on *alive
@@ -1278,8 +1470,7 @@ void Server::ifmap_endpoint_listener()
 
         spdlog::info("[IFMAP] ifmap listener running on {}:{}", addr_, port_ + 1);
 
-        while(running.load(std::memory_order_consume)) {
-            TSAN_ACQUIRE(&running);
+        while(running == true) {
             MX::RPC::Socket* socket = listener.accept();
 
             spdlog::debug("[IFMAP] ifmap connection from {}", socket->remote_endpoint());
@@ -1313,7 +1504,7 @@ void Server::ifmap_endpoint_listener()
                 meta = client_meta[h.client_id];
 
                 // Exception occurs when the client init connection (e.g. program stop or crash in the middle of init connection)
-                if (meta->alive.load(std::memory_order_consume) == false) {
+                if (meta->alive == false) {
                     spdlog::error("[IFMAP] ifmap connection from {} client ID {} is not alive", socket->remote_endpoint(), h.client_id);
                     delete socket;
                     continue;
@@ -1346,10 +1537,7 @@ void Server::ifmap_session(MX::RPC::Socket* s, ClientMeta* meta)
     IomapItem* item = nullptr;
 
     // non-stop unidirectional data flood, woohoo!
-    while(LIKELY(meta->alive.load(std::memory_order_consume) && running.load(std::memory_order_consume))) {
-
-        TSAN_ACQUIRE(&meta->alive);
-        TSAN_ACQUIRE(&running);
+    while(LIKELY(meta->alive == true && running == true)) {
 
         // get a free IomapItem ptr from the ModelContext's ifmap_freelist
         my_model_context->ifmap_freelist->pop(item);
@@ -1393,8 +1581,7 @@ void Server::ifmap_session(MX::RPC::Socket* s, ClientMeta* meta)
     }
 
 icleanup:
-    meta->alive.store(false, std::memory_order_release);
-    TSAN_RELEASE(&(meta->alive));
+    meta->alive = false;
 
     // finish ifmap_session
     {
@@ -1432,8 +1619,7 @@ void Server::ofmap_endpoint_listener()
 
         spdlog::info("[OFMAP] ofmap listener running on {}:{}", addr_, port_ + 2);
 
-        while(running.load(std::memory_order_consume)) {
-            TSAN_ACQUIRE(&running);
+        while(running == true) {
             MX::RPC::Socket* socket = listener.accept();
 
             spdlog::debug("[OFMAP] ofmap connection from {}", socket->remote_endpoint());
@@ -1467,7 +1653,7 @@ void Server::ofmap_endpoint_listener()
                 meta = client_meta[h.client_id];
 
                 // Exception occurs when the client init connection (e.g. program stop or crash in the middle of init connection)
-                if (meta->alive.load(std::memory_order_consume) == false) {
+                if (meta->alive == false) {
                     spdlog::error("[OFMAP] ofmap connection from {} client ID {} is not alive", socket->remote_endpoint(), h.client_id);
                     delete socket;
                     continue;
@@ -1505,10 +1691,7 @@ void Server::ofmap_session(MX::RPC::Socket* s, ClientMeta* meta)
     std::chrono::steady_clock::time_point start_time = std::chrono::steady_clock::now();
 
     // non-stop unidirectional data flood, woohoo!
-    while(LIKELY(meta->alive.load(std::memory_order_consume) && running.load(std::memory_order_consume))) {
-
-        TSAN_ACQUIRE(&meta->alive);
-        TSAN_ACQUIRE(&running);
+    while(LIKELY(meta->alive == true && running == true)) {
 
         // Add the "smoothing" delay here: make sure at least min_time_between_outputs milliseconds
         // have passed since the last time we got to the top of this loop
@@ -1526,8 +1709,7 @@ void Server::ofmap_session(MX::RPC::Socket* s, ClientMeta* meta)
         if(my_client_context->driver_ctx_fifo->pop(next_driver_ctx) == false) {
             // if we can't pop, then we are done with this session
             spdlog::info("[OFMAP] driver_ctx_fifo pop was killed, exiting ofmap session for client {}", meta->id);
-            if(meta->alive.load(std::memory_order_consume) == true) {
-                TSAN_ACQUIRE(&meta->alive);
+            if(meta->alive == true) {
                 spdlog::error("[OFMAP] we should not have reached this point with alive == true");
             }
             break;
@@ -1539,8 +1721,7 @@ void Server::ofmap_session(MX::RPC::Socket* s, ClientMeta* meta)
         }
 
         // the server might shut down while we were waiting
-        if(UNLIKELY(running.load(std::memory_order_consume) == false)) {
-            TSAN_ACQUIRE(&running);
+        if(UNLIKELY(running == false)) {
             spdlog::warn("[OFMAP] server shutting down, exiting ofmap session for client {}", meta->id);
             break;
         }
@@ -1581,8 +1762,7 @@ void Server::ofmap_session(MX::RPC::Socket* s, ClientMeta* meta)
     }
 
 ocleanup:
-    meta->alive.store(false, std::memory_order_release);
-    TSAN_RELEASE(&(meta->alive));
+    meta->alive = false;
 
     // finish ofmap_session
     {
@@ -1615,7 +1795,7 @@ void Server::executor_thread(uint8_t device_id_)
 
     DFPContext* dfp_ctx = nullptr;
 
-    DFPExecutor my_exec(device_id_, &devinfo_table, &(executor_queues[device_id_]));
+    DFPExecutor my_exec(device_id_, &devinfo_table, &(executor_queues[device_id_]), hw_monitor_interval_ms);
     {
         std::unique_lock<std::shared_mutex> lock(m_executor_table);
         all_dfp_executors[device_id_] = &my_exec;
@@ -1625,8 +1805,7 @@ void Server::executor_thread(uint8_t device_id_)
     // don't lock anything until we get a task
     bool currently_locked = false;
 
-    while(running.load(std::memory_order_consume)) {
-        TSAN_ACQUIRE(&running);
+    while(running == true) {
         // pop a task from the scheduler queue with 1s timeout
         if(executor_queues[device_id_].pop_timeout(task, 1000)) {
             if(!currently_locked) {
@@ -1666,6 +1845,10 @@ void Server::executor_thread(uint8_t device_id_)
             // if we timed out, then we need to unlock the device
             if(currently_locked) {
                 spdlog::debug("[EXECUTOR {}] Device {} is idle, closing & unlocking it for now", device_id_, device_id_);
+
+                // reset to default frequency
+                my_exec.set_next_power_mode(MX::Types::MxFrequencyOption::FREQ_USE_CONF);
+
                 if(my_exec.close_device() == false) {
                     spdlog::error("[EXECUTOR {}] Device {} failed to close device", device_id_, device_id_);
                 }
@@ -1695,22 +1878,18 @@ void Server::scheduler_thread_func()
     // simple device round-robin, start at 0
     int32_t device_id = 0;
 
-    while(running.load(std::memory_order_consume)) {
-        TSAN_ACQUIRE(&running);
+    while(running == true) {
         // pop a task from the scheduler queue
         if(scheduler_queue.pop_timeout(task, 5000 /* 5s timeout for checking for shutdowns */)) {
 
             // if the DFPContext of this task has 0 clients, delete the task
             if(task->dfp_ctx->client_ref_count.load() <= 0) {
-                TSAN_ACQUIRE(&task->dfp_ctx->client_ref_count);
                 spdlog::debug("[SCHEDULER] Task with DFPContext {} has no clients, deleting task", MX::sha512::to_base64(task->dfp_ctx->hash));
 
-                std::unique_lock<std::mutex> xlock(task->dfp_ctx->exec_ref_count_lock);
                 task->dfp_ctx->exec_ref_count--;
                 if(task->dfp_ctx->exec_ref_count == 0) {
-                    xlock.unlock();
                     // no more executors, delete the DFPContext
-                    spdlog::debug("[SCHEDULER] DFPContext {} has no more executors, deleting it", MX::sha512::to_base64(task->dfp_ctx->hash));
+                    spdlog::info("[SCHEDULER] DFPContext {} has no more executors, deleting it", MX::sha512::to_base64(task->dfp_ctx->hash));
 
                     // go through dfp_ctx->device2context_table, and for each device_id [key],
                     // call that Executor's close_ctx() method on the ctx_id [value]
@@ -1733,9 +1912,6 @@ void Server::scheduler_thread_func()
                         task->dfp_ctx = nullptr;
                         dlock.unlock();
                     }
-                }
-                else {
-                    xlock.unlock();
                 }
 
                 delete task;

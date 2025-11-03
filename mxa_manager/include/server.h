@@ -11,7 +11,6 @@
 #pragma once
 #include <string>
 #include <vector>
-#include <atomic>
 #include <deque>
 #include <stack>
 #include <shared_mutex>
@@ -28,6 +27,7 @@
 
 #include <memx/accl/utils/comm_sockets.h>
 #include <memx/accl/utils/sha512.h>
+#include <memx/accl/utils/locked_var.h>
 #include <memx/accl/utils/blocky_queue.h>
 #include <memx/accl/utils/id_tracker.h>
 
@@ -35,6 +35,8 @@
 #include "lock_table.h"
 
 using mxasio::ip::tcp;
+
+using namespace MX::Utils; // BlockyQueue, SharedLockedVar
 
 // ----- THE BIG KAHUNA -----
 //
@@ -50,8 +52,8 @@ namespace Manager
 {
 
 struct ClientMeta {
-    uint32_t         id;
-    std::atomic_bool alive;
+    SharedLockedVar<bool> alive;
+    uint32_t              id;
 
     std::mutex              ifmap_session_lock;
     bool                    ifmap_session_finish;
@@ -82,7 +84,7 @@ struct ClientMeta {
         my_client_context = nullptr;
         ifmap_session_finish = false;
         ofmap_session_finish = false;
-        alive.store(true, std::memory_order_release);
+        alive = true;
     }
 
     ~ClientMeta()
@@ -108,7 +110,7 @@ struct ClientMeta {
 class Server
 {
   public:
-    Server(std::string addr_, unsigned short base_port_);
+    Server(std::string addr_, unsigned short base_port_, unsigned int hw_monitor_interval_ms_ = 500);
     ~Server();
 
     // Start and run the server
@@ -120,8 +122,9 @@ class Server
   private:
     unsigned short base_port;
     std::string addr;
+    const unsigned int hw_monitor_interval_ms;
 
-    std::atomic_bool running;
+    SharedLockedVar<bool> running;
 
     //=====================================================
     // CONNECTION LISTENERS

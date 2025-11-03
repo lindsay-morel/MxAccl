@@ -42,31 +42,61 @@ MxAcclBase::MxAcclBase(const std::filesystem::path& dfp_path, std::vector<int> d
     // connect the dfp
     int dfp_id = connect_dfp(dfp_path, device_ids_to_use, use_model_shape, local_mode, sched_options, client_options);
     if(dfp_id < 0) {
-        std::string err_msg = "[MxAcclBase] Error in MxAcclBase constructor: connect_dfp failed. Please make sure mxa-manager is running and the DFP file is valid.";
+        std::string err_msg = "[MxAcclBase] Error in MxAcclBase constructor: connect_dfp failed.";
         spdlog::error(err_msg);
         throw std::runtime_error(err_msg);
+    }
+
+    if(local_mode){
+        // init pressure history
+        pressure_thread_running.store(true, std::memory_order_relaxed);
+        pressure_history.resize(device_manager->all_devices_count);
+        pressure_avgs.resize(device_manager->all_devices_count, 0.0f);
+        pressure_thread = new std::thread(&MxAcclBase::pressure_thread_func, this, device_ids_to_use);
+        pressure_thread->detach();
+    } else {
+        pressure_thread = nullptr;
+        pressure_thread_running.store(false, std::memory_order_relaxed);
     }
 }
 
 
 // AIO constructor using bytes
-MxAcclBase::MxAcclBase(uint8_t* dfp_bytes, std::vector<int> device_ids_to_use,
+MxAcclBase::MxAcclBase(uint8_t* dfp_bytes, size_t dfp_byte_size, std::vector<int> device_ids_to_use,
                        std::array<bool, 2> use_model_shape, bool local_mode,
                        SchedulerOptions sched_options, ClientOptions client_options,
                        std::string server_addr, unsigned int server_port_base, bool ignore_server)
     : MxAcclBase(server_addr, server_port_base, ignore_server)
 {
     // connect the dfp
-    int dfp_id = connect_dfp(dfp_bytes, device_ids_to_use, use_model_shape, local_mode, sched_options, client_options);
+    int dfp_id = connect_dfp(dfp_bytes, dfp_byte_size, device_ids_to_use, use_model_shape, local_mode, sched_options, client_options);
     if(dfp_id < 0) {
-        std::string err_msg = "[MxAcclBase] Error in MxAcclBase constructor: connect_dfp failed. Please make sure mxa-manager is running and the DFP file is valid.";
+        std::string err_msg = "[MxAcclBase] Error in MxAcclBase constructor: connect_dfp failed.";
         spdlog::error(err_msg);
         throw std::runtime_error(err_msg);
+    }
+    
+    if(local_mode){
+        // init pressure history
+        pressure_thread_running.store(true, std::memory_order_relaxed);
+        pressure_history.resize(device_manager->all_devices_count);
+        pressure_avgs.resize(device_manager->all_devices_count, 0.0f);
+        pressure_thread = new std::thread(&MxAcclBase::pressure_thread_func, this, device_ids_to_use);
+        pressure_thread->detach();
+    } else {
+        pressure_thread = nullptr;
+        pressure_thread_running.store(false, std::memory_order_relaxed);
     }
 }
 
 MxAcclBase::~MxAcclBase()
 {
+    // stop pressure thread if local mode
+    if(pressure_thread != nullptr) {
+        pressure_thread_running.store(false, std::memory_order_relaxed);
+        delete pressure_thread;
+        pressure_thread = nullptr;
+    }
     // close all dfp_runners
     for(auto it = runner_table.begin(); it != runner_table.end(); it++) {
         DFPRunner* dfp_runner = it->second;
@@ -94,13 +124,51 @@ bool MxAcclBase::is_ready()
     }
 }
 
+//==============================================================================================
+// LOCAL MODE PRESSURE MONITOR
+//==============================================================================================
+
+void MxAcclBase::pressure_thread_func(std::vector<int> device_ids){
+    // this thread periodically polls each device in device_ids
+    // and updates an average pressure value for each device
+    // the get_pressure function just returns the average
+    while(pressure_thread_running.load(std::memory_order_relaxed)) {
+
+        for(auto device_id : device_ids) {
+            if(device_id < 0 || device_id >= device_manager->all_devices_count) {
+                continue;
+            }
+            float p = device_manager->get_pressure(device_id);
+            if(p < 0.0f || p > 100.0f) {
+                continue;
+            }
+            auto& history = pressure_history[device_id];
+            history.push_back(p);
+            if(history.size() > pressure_history_len) {
+                history.pop_front();
+            }
+
+            // average the history into the pressure_avgs vect
+            float sum = 0.0f;
+            #pragma omp simd reduction(+:sum)
+            for(unsigned int i = 0; i < history.size(); i++) {
+                sum += history[i];
+            }
+            pressure_avgs[device_id] = sum / static_cast<float>(history.size());
+        }
+        
+        std::this_thread::sleep_for(std::chrono::milliseconds(pressure_poll_interval_ms));
+    }
+}
+
 
 //==============================================================================================
 // CONNECT DFP FUNCTIONS
 //==============================================================================================
 
 // multi-device from bytes
-int MxAcclBase::connect_dfp(uint8_t* dfp_bytes, std::vector<int> device_ids_to_use,
+int MxAcclBase::connect_dfp(uint8_t* dfp_bytes, size_t dfp_byte_size, 
+                            std::vector<int> device_ids_to_use,
                             std::array<bool, 2> use_model_shape,
                             bool local_mode,
                             SchedulerOptions sched_options, ClientOptions client_options)
@@ -122,7 +190,7 @@ int MxAcclBase::connect_dfp(uint8_t* dfp_bytes, std::vector<int> device_ids_to_u
     dfp_id = dfp_id_tracker.get_new();
 
     // parse the dfp_bytes into a Dfp::DfpObject
-    Dfp::DfpObject* dfp = new Dfp::DfpObject(dfp_bytes);
+    Dfp::DfpObject* dfp = new Dfp::DfpObject(dfp_bytes, dfp_byte_size);
 
     // create the runner
     DFPRunner* dfp_runner = new DFPRunner(dfp_id, dfp, server_addr_, server_port_base_, local_mode, device_ids_to_use,
@@ -468,7 +536,7 @@ void MxAcclBase::set_parallel_fmap_convert(int num_threads, int model_id)
 }
 
 //==============================================================================================
-// POWER & TEMP FUNCTIONS
+// POWER, TEMP, AND PRESSURE FUNCTIONS
 //==============================================================================================
 
 bool MxAcclBase::can_get_power_consumption(int device_id)
@@ -619,49 +687,122 @@ std::vector<float> MxAcclBase::get_chip_temperatures(int device_id)
     }
 }
 
-bool MxAcclBase::set_operating_frequency(int device_id, MxFrequencyOption freq_option, bool two_chip_mode_on_four_chip)
+Pressure MxAcclBase::get_pressure(int device_id)
 {
-
-    // TODO FIXME HEY TIM: make a remote set_freq for shared mode!
-
-    if(device_manager == nullptr) {
-        spdlog::error("[MxAcclBase] Error in set_operating_frequency: device_manager is null");
-        return false;
+    std::shared_lock<std::shared_mutex> lock(runner_mutex);
+    // get the DFPRunner for this device_id
+    auto it = device_to_dfp_id_map.find(device_id);
+    if(UNLIKELY(it == device_to_dfp_id_map.end())) {
+        spdlog::error("[MxAcclBase] Error in get_pressure: device_id {} not found in device_to_dfp_id_map", device_id);
+        lock.unlock();
+        return Pressure(Pressure::Level::FULL);
+    }
+    int dfp_id = it->second;
+    // get the DFPRunner
+    auto dfp_it = runner_table.find(dfp_id);
+    if(UNLIKELY(dfp_it == runner_table.end())) {
+        spdlog::error("[MxAcclBase] Error in get_pressure: dfp_id {} not found in runner_table", dfp_id);
+        lock.unlock();
+        return Pressure(Pressure::Level::FULL);
     }
 
-    if(device_id < 0 || device_id >= device_manager->all_devices_count) {
-        spdlog::error("[MxAcclBase] Error in set_operating_frequency: device_id {} is out of range", device_id);
-        return false;
-    }
+    bool is_local = dfp_it->second->is_local();
 
-    // get the number of chips on this device_id's device_infos
-    int device_chip_count = device_manager->device_infos[device_id].chip_count;
+    if(!is_local) {
+        Client* client = dfp_it->second->get_first_client();
+        lock.unlock();
 
-    // go through the runner_table and see if any DFPRunners are in Shared mode
-    // if so, then we can't set the operating frequency
-    for(auto it = runner_table.begin(); it != runner_table.end(); it++) {
-        DFPRunner* dfp_runner = it->second;
-        if(dfp_runner->is_local() == false) {
-            spdlog::error("[MxAcclBase] Error in set_operating_frequency: You currently have a DFP running in Shared mode. Cannot safely set operating frequency until the mxa_manager daemon no longer controls any devices.",
-                          device_id);
-            return false;
+        // call client->get_pressure(device_id)
+        if(UNLIKELY(client == nullptr)) {
+            spdlog::error("[MxAcclBase] Error in get_pressure: client is null");
+        }
+
+        float p = client->get_pressure(device_id);
+        if(p < MEMX_PRESSURE_LOW_THRESH) {
+            return Pressure(Pressure::Level::LOW);
+        }
+        else if(p < MEMX_PRESSURE_MEDIUM_THRESH) {
+            return Pressure(Pressure::Level::MEDIUM);
+        }
+        else if(p < MEMX_PRESSURE_HIGH_THRESH) {
+            return Pressure(Pressure::Level::HIGH);
+        }
+        else {
+            return Pressure(Pressure::Level::FULL);
         }
     }
+    else {
+        lock.unlock();
+        if(device_id < 0 || ((unsigned int)device_id) >= pressure_avgs.size()) {
+            spdlog::error("[MxAcclBase] Error in get_pressure: device_id {} is out of range", device_id);
+            return -1;
+        }
 
-    // don't allow changing this if the local_device_in_use for it is true, OR if we're in Shared mode
-    if(device_manager->local_device_in_use[device_id]) {
-        spdlog::error("[MxAcclBase] Error in set_operating_frequency: device_id {} is already in operation. Must set power before starting.",
-                      device_id);
+        float p = pressure_avgs[device_id];
+        if(p < MEMX_PRESSURE_LOW_THRESH) {
+            return Pressure(Pressure::Level::LOW);
+        }
+        else if(p < MEMX_PRESSURE_MEDIUM_THRESH) {
+            return Pressure(Pressure::Level::MEDIUM);
+        }
+        else if(p < MEMX_PRESSURE_HIGH_THRESH) {
+            return Pressure(Pressure::Level::HIGH);
+        }
+        else {
+            return Pressure(Pressure::Level::FULL);
+        }
+    }
+}
+
+
+//==============================================================================================
+// DEVICE CONTROL FUNCTIONS
+//==============================================================================================
+
+bool MxAcclBase::set_operating_frequency(int device_id, MxFrequencyOption freq_option)
+{
+    std::shared_lock<std::shared_mutex> lock(runner_mutex);
+    // get the DFPRunner for this device_id
+    auto it = device_to_dfp_id_map.find(device_id);
+    if(UNLIKELY(it == device_to_dfp_id_map.end())) {
+        spdlog::error("[MxAcclBase] Error in set_operating_frequency: device_id {} not found in device_to_dfp_id_map", device_id);
+        lock.unlock();
+        return false;
+    }
+    int dfp_id = it->second;
+    // get the DFPRunner
+    auto dfp_it = runner_table.find(dfp_id);
+    if(UNLIKELY(dfp_it == runner_table.end())) {
+        spdlog::error("[MxAcclBase] Error in set_operating_frequency: dfp_id {} not found in runner_table", dfp_id);
+        lock.unlock();
         return false;
     }
 
-    // if two_chip_mode_on_four_chip is true, check that device_chip_count is 4
-    // if so, then call set_power_mode with num_chips = 2
-    // else, call set_power_mode with num_chips = device_chip_count
-    if(two_chip_mode_on_four_chip && device_chip_count == 4) {
-        return device_manager->set_power_mode(device_id, 2, freq_option);
+    bool is_local = dfp_it->second->is_local();
+
+    if(!is_local) {
+        Client* client = dfp_it->second->get_first_client();
+        lock.unlock();
+
+        // call client->get_avg_max_temp(device_id)
+        if(UNLIKELY(client == nullptr)) {
+            spdlog::error("[MxAcclBase] Error in set_operating_frequency: client is null");
+            return false;
+        }
+
+        return client->set_power_mode(device_id, (uint16_t) freq_option);
     }
     else {
+        lock.unlock();
+        if(device_id < 0 || device_id >= device_manager->all_devices_count) {
+            spdlog::error("[MxAcclBase] Error in set_operating_frequency: device_id {} is out of range", device_id);
+            return false;
+        }
+
+        // get the device chip count from device_manager
+        int device_chip_count = device_manager->device_infos[device_id].chip_count;
+
         return device_manager->set_power_mode(device_id, device_chip_count, freq_option);
     }
+
 }

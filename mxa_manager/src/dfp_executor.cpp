@@ -27,8 +27,8 @@ using namespace MX::RPC;
 //---------------------------------------------------------
 //---------------------------------------------------------
 //---------------------------------------------------------
-DFPExecutor::DFPExecutor(uint8_t device_id_, const std::vector<device_info_t>* devinfos_, const BlockyQueue<ExecutorTask*> *my_exec_queue_)
-    : my_exec_queue(my_exec_queue_), devinfos(devinfos_)
+DFPExecutor::DFPExecutor(uint8_t device_id_, std::vector<device_info_t>* devinfos_, const BlockyQueue<ExecutorTask*> *my_exec_queue_, unsigned int hw_monitor_interval_ms)
+    : my_exec_queue(my_exec_queue_), devinfos(devinfos_), hw_monitor_interval(std::chrono::milliseconds(hw_monitor_interval_ms))
 {
     device_id = device_id_;
 
@@ -37,6 +37,8 @@ DFPExecutor::DFPExecutor(uint8_t device_id_, const std::vector<device_info_t>* d
 
     // initialize my module to default freq/volt options
     read_power_mode();
+    current_freq_option = MX::Types::MxFrequencyOption::FREQ_USE_CONF;
+    next_freq_option = MX::Types::MxFrequencyOption::FREQ_USE_CONF;
     set_power_mode(MX::Types::MxFrequencyOption::FREQ_USE_CONF);
 
     hw_monitor_running = false;
@@ -84,36 +86,40 @@ DFPExecutor::~DFPExecutor()
 
 void DFPExecutor::start_hw_monitor()
 {
-    std::unique_lock<std::shared_mutex> lock(m_hw_monitor_lock);
+    std::unique_lock<std::mutex> lock(m_hw_monitor_lock);
     if(hw_monitor_running == false) {
         hw_monitor_running = true;
+        lock.unlock();
         hw_monitor_thread = new std::thread(&DFPExecutor::hw_monitor_loop, this);
         spdlog::debug("DFPExecutor {}: started hardware monitor thread", device_id);
     }
     else {
         //spdlog::error("DFPExecutor {}: hardware monitor thread already running", device_id);
+        lock.unlock();
     }
-    lock.unlock();
 }
 
 void DFPExecutor::stop_hw_monitor()
 {
-    std::shared_lock<std::shared_mutex> lock(m_hw_monitor_lock);
+    std::unique_lock<std::mutex> lock(m_hw_monitor_lock);
     if(hw_monitor_running == true) {
         hw_monitor_running = false;
         if(hw_monitor_thread != nullptr) {
+            lock.unlock();
             if(hw_monitor_thread->joinable()) {
                 hw_monitor_thread->join();
             }
             delete hw_monitor_thread;
             hw_monitor_thread = nullptr;
             spdlog::debug("DFPExecutor {}: stopping hardware monitor thread", device_id);
+        } else {
+            lock.unlock();
         }
     }
     else {
         //spdlog::info("DFPExecutor {}: hardware monitor thread not running", device_id);
+        lock.unlock();
     }
-    lock.unlock();
 }
 
 void DFPExecutor::hw_monitor_loop()
@@ -132,6 +138,9 @@ void DFPExecutor::hw_monitor_loop()
         // clear power window
         power_window.clear();
 
+        // clear pressure window
+        pressure_window.clear();
+
         // clear each temp_window
         for(uint8_t i = 0; i < num_chips; i++) {
             temp_window[i].clear();
@@ -139,90 +148,118 @@ void DFPExecutor::hw_monitor_loop()
     }
 
     uint64_t pvalue = 0;
+    uint64_t uvalue = 0;
 
-    std::shared_lock<std::shared_mutex> hlock(m_hw_monitor_lock, std::defer_lock);
 
     for(;;) {
 
         // sleep for base_time + interval
         std::this_thread::sleep_until(base_time + hw_monitor_interval);
 
-        hlock.lock();
-        if(hw_monitor_running == false) {
-            hlock.unlock();
-            spdlog::debug("DFPExecutor {}: hardware monitor thread stopped", device_id);
-            return; // die
-        }
-        else {
+        {
+            std::unique_lock<std::mutex> hlock(m_hw_monitor_lock);
+            if(hw_monitor_running == false) {
+                hlock.unlock();
+                spdlog::debug("DFPExecutor {}: hardware monitor thread stopped", device_id);
+                return; // die
+            }
+            else {
 
-            // get temp of each chip
-            for(uint8_t i = 0; i < num_chips; i++) {
-                memx_status status = memx_get_feature(device_id, i, OPCODE_GET_TEMPERATURE, &(tvalues[i]));
+                // get temp of each chip
+                for(uint8_t i = 0; i < num_chips; i++) {
+                    memx_status status = memx_get_feature(device_id, i, OPCODE_GET_TEMPERATURE, &(tvalues[i]));
+                    if(UNLIKELY(memx_status_error(status))) {
+                        spdlog::error("DFPExecutor {}: memx_get_chip_temp() failed with error {} for chip {}", device_id, (uint32_t)status, i);
+                        tvalues[i] = 0; // set to 0 on error
+                        hlock.unlock();
+                        return; // die
+                    }
+                }
+
+                // get power value
+                if(can_get_power) {
+                    memx_status status = memx_get_feature(device_id, 0, OPCODE_GET_POWER, &pvalue);
+                    if(UNLIKELY(memx_status_error(status))) {
+                        spdlog::error("DFPExecutor {}: memx_get_power() failed with error {}", device_id, (uint32_t)status);
+                        pvalue = 0; // set to 0 on error
+                        hlock.unlock();
+                        return; // die
+                    }
+                }
+
+                // get pressure (utilization) value
+                memx_status status = memx_get_feature(device_id, 0, OPCODE_GET_MPU_UTILIZATION, &uvalue);
                 if(UNLIKELY(memx_status_error(status))) {
-                    spdlog::error("DFPExecutor {}: memx_get_chip_temp() failed with error {} for chip {}", device_id, (uint32_t)status, i);
-                    tvalues[i] = 0; // set to 0 on error
+                    spdlog::error("DFPExecutor {}: memx_get_mpu_utilization() failed with error {}", device_id, (uint32_t)status);
+                    uvalue = 0; // set to 0 on error
                     hlock.unlock();
                     return; // die
                 }
-            }
+                
+                // don't need hardware access anymore
+                hlock.unlock();
 
-            // get power value
-            if(can_get_power) {
-                memx_status status = memx_get_feature(device_id, 0, OPCODE_GET_POWER, &pvalue);
-                if(UNLIKELY(memx_status_error(status))) {
-                    spdlog::error("DFPExecutor {}: memx_get_power() failed with error {}", device_id, (uint32_t)status);
-                    pvalue = 0; // set to 0 on error
-                    hlock.unlock();
-                    return; // die
-                }
-            }
+                // acquire exclusive lock and update values
+                {
+                    std::unique_lock<std::shared_mutex> lock(m_temp_power);
 
-            // acquire exclusive lock and update values
-            {
-                std::unique_lock<std::shared_mutex> lock(m_temp_power);
-
-                if(can_get_power) {
-                    power_window.push_back(static_cast<float>(pvalue));
-                    if(power_window.size() > hw_monitor_avg_samples) {
-                        power_window.pop_front(); // remove oldest sample
+                    if(can_get_power) {
+                        power_window.push_back(static_cast<float>(pvalue));
+                        // div by 2 so the window for pressure is half as small
+                        // (need a fast response time)
+                        if(power_window.size() > (hw_monitor_avg_samples/2)) {
+                            power_window.pop_front(); // remove oldest sample
+                        }
                     }
-                }
 
-                for(uint8_t i = 0; i < num_chips; i++) {
-                    temp_window[i].push_back(static_cast<float>(tvalues[i]) - 273.0); // convert Kelvin to Celsius
-                    if(temp_window[i].size() > hw_monitor_avg_samples) {
-                        temp_window[i].pop_front(); // remove oldest sample
+                    for(uint8_t i = 0; i < num_chips; i++) {
+                        temp_window[i].push_back(static_cast<float>(tvalues[i]) - 273.0); // convert Kelvin to Celsius
+                        if(temp_window[i].size() > hw_monitor_avg_samples) {
+                            temp_window[i].pop_front(); // remove oldest sample
+                        }
                     }
-                }
 
-                // update the averages
-                _avg_power = 0.0f;
-                if(can_get_power) {
-                    for(unsigned int j = 0; j < power_window.size(); j++) {
-                        _avg_power += power_window[j];
+                    pressure_window.push_back(static_cast<float>(uvalue));
+                    if(pressure_window.size() > hw_monitor_avg_samples) {
+                        pressure_window.pop_front(); // remove oldest sample
                     }
-                    if(!power_window.empty()) {
-                        _avg_power /= static_cast<float>(power_window.size());
+
+                    // update the averages
+                    _avg_power = 0.0f;
+                    if(can_get_power) {
+                        for(unsigned int j = 0; j < power_window.size(); j++) {
+                            _avg_power += power_window[j];
+                        }
+                        if(!power_window.empty()) {
+                            _avg_power /= static_cast<float>(power_window.size());
+                        }
                     }
-                }
-
-                for(uint8_t i = 0; i < num_chips; i++) {
-                    _avg_temps[i] = 0.0f;
-                    for(unsigned int j = 0 ; j < temp_window[i].size(); j++) {
-                        _avg_temps[i] += temp_window[i][j];
+                    
+                    _avg_pressure = 0.0f;
+                    for(unsigned int j = 0; j < pressure_window.size(); j++) {
+                        _avg_pressure += pressure_window[j];
                     }
-                    if(!temp_window[i].empty()) {
-                        _avg_temps[i] /= static_cast<float>(temp_window[i].size());
+                    if(!pressure_window.empty()) {
+                        _avg_pressure /= static_cast<float>(pressure_window.size());
                     }
-                }
-            }
 
-            hlock.unlock();
-        }
+                    for(uint8_t i = 0; i < num_chips; i++) {
+                        _avg_temps[i] = 0.0f;
+                        for(unsigned int j = 0 ; j < temp_window[i].size(); j++) {
+                            _avg_temps[i] += temp_window[i][j];
+                        }
+                        if(!temp_window[i].empty()) {
+                            _avg_temps[i] /= static_cast<float>(temp_window[i].size());
+                        }
+                    }
+                } // m_temp_power lock scope
 
-        // update the base time for the next iteration
-        base_time = std::chrono::steady_clock::now();
+            } // hw_monitor_running check scope
 
+            // update the base time for the next iteration
+            base_time = std::chrono::steady_clock::now();
+
+        } // m_hw_monitor_lock scope
     }
 
     spdlog::debug("DFPExecutor {}: hardware monitor thread stopped", device_id);
@@ -289,6 +326,13 @@ float DFPExecutor::avg_power()
     return _avg_power;
 }
 
+// returns the average pressure (pipeline utilization)
+float DFPExecutor::avg_pressure()
+{
+    std::shared_lock<std::shared_mutex> lock(m_temp_power);
+    return _avg_pressure;
+}
+
 // returns the instantaneous power value (most recent in deque)
 float DFPExecutor::inst_power()
 {
@@ -353,6 +397,11 @@ void DFPExecutor::read_power_mode()
     }
 }
 
+void DFPExecutor::set_next_power_mode(MX::Types::MxFrequencyOption fop)
+{
+    std::lock_guard<std::mutex> lock(set_freq_mutex);
+    next_freq_option = fop;
+}
 
 bool DFPExecutor::set_power_mode(MX::Types::MxFrequencyOption fop)
 {
@@ -363,13 +412,18 @@ bool DFPExecutor::set_power_mode(MX::Types::MxFrequencyOption fop)
             status = memx_set_feature(device_id, 0, OPCODE_SET_FREQUENCY, c2_freq);
             status = memx_set_feature(device_id, 1, OPCODE_SET_FREQUENCY, c2_freq);
             status = memx_set_feature(device_id, 0, OPCODE_SET_VOLTAGE,   c2_volt);
+            devinfos->at(device_id).volt = c2_volt;
+            devinfos->at(device_id).freqs[0] = c2_freq;
+            devinfos->at(device_id).freqs[1] = c2_freq;
         }
         else if(num_chips >= 4) {
             // all num_chips >= 4 use the c4 values
             for(int i = 0; i < num_chips; i++) {
                 status = memx_set_feature(device_id, i, OPCODE_SET_FREQUENCY, c4_freq);
+                devinfos->at(device_id).freqs[i] = c4_freq;
             }
             status = memx_set_feature(device_id, 0, OPCODE_SET_VOLTAGE, c4_volt);
+            devinfos->at(device_id).volt = c4_volt;
         }
         else {
             spdlog::error("DFPExecutor {}: num_chips {} is invalid for set_power_mode()", device_id, num_chips);
@@ -382,8 +436,10 @@ bool DFPExecutor::set_power_mode(MX::Types::MxFrequencyOption fop)
         // set all chips to the same frequency that's passed in fop
         for(int i = 0; i < num_chips; i++) {
             status = memx_set_feature(device_id, i, OPCODE_SET_FREQUENCY, fop);
+            devinfos->at(device_id).freqs[i] = fop;
         }
         status = memx_set_feature(device_id, 0, OPCODE_SET_VOLTAGE, volt);
+        devinfos->at(device_id).volt = volt;
     }
 
     return memx_status_no_error(status);
@@ -422,7 +478,9 @@ bool DFPExecutor::close_device()
 
     _avg_temps.clear();
     _avg_power = 0.0f;
+    _avg_pressure = 0.0f;
     power_window.clear();
+    pressure_window.clear();
     for(uint8_t i = 0; i < temp_window.size(); i++) {
         temp_window[i].clear();
     }
@@ -458,7 +516,6 @@ bool DFPExecutor::close_ctx(uint8_t driver_ctx_id)
 
 bool DFPExecutor::open_device(DFPContext* d)
 {
-
     uint8_t driver_ctx_id = d->device2context_table[device_id];
     std::unique_lock<std::mutex> dcslock(m_driver_ctx_set);
     // skip if already open
@@ -500,6 +557,23 @@ bool DFPExecutor::download_and_start_dfp(DFPContext* d)
         }
     }
 
+    // set the power mode if next_freq_option differs from current_freq_option
+    {
+        std::lock_guard<std::mutex> lock(set_freq_mutex);
+        if(next_freq_option != current_freq_option) {
+            if(set_power_mode(next_freq_option)) {
+                spdlog::info("DFPExecutor {}: changed power mode from {} to {}", device_id,
+                             MX::Types::mxFrequencyOptionToString(current_freq_option),
+                             MX::Types::mxFrequencyOptionToString(next_freq_option));
+                current_freq_option = next_freq_option;
+            }
+            else {
+                spdlog::error("DFPExecutor {}: failed to set power mode to {}", device_id,
+                              MX::Types::mxFrequencyOptionToString(next_freq_option));
+            }
+        }
+    }
+
     // print all the members of the DfpContext from d->dfp_obj->get_cache()
     Dfp::pDfpContext cache = d->dfp_obj->get_cache();
     if(UNLIKELY(cache == nullptr)) {
@@ -534,6 +608,25 @@ bool DFPExecutor::download_and_start_dfp(DFPContext* d)
             // allocate new dumpster
             dumpster_size = d->info->biggest_ofmap_bytes;
             dumpster = new uint8_t[dumpster_size];
+        }
+    }
+
+    // USB workaround: always call config_mpu_group before downloading DFPs
+    if(devinfos->at(device_id).is_usb) {
+        if(LIKELY(devinfos->at(device_id).chip_count == 2)){
+            memx_status s = memx_config_mpu_group(device_id, MEMX_MPU_GROUP_CONFIG_ONE_GROUP_TWO_MPUS);
+            if(UNLIKELY(memx_status_error(s))) {
+                spdlog::critical("DFPExecutor {}: memx_config_mpu_group() failed with error {} for device_id {} / driver ctx {}",
+                             device_id, (uint32_t)s, device_id, driver_ctx_id);
+                return false;
+            }
+        } else {
+            memx_status s = memx_config_mpu_group(device_id, MEMX_MPU_GROUP_CONFIG_ONE_GROUP_FOUR_MPUS);
+            if(UNLIKELY(memx_status_error(s))) {
+                spdlog::critical("DFPExecutor {}: memx_config_mpu_group() failed with error {} for device_id {} / driver ctx {}",
+                             device_id, (uint32_t)s, device_id, driver_ctx_id);
+                return false;
+            }
         }
     }
 
@@ -589,6 +682,14 @@ bool DFPExecutor::run_dfp(ExecutorTask* task)
 {
 
     DFPContext* d = task->dfp_ctx;
+
+    // if this device's num_chips != the d->info->num_chips, error
+    if(UNLIKELY(num_chips != d->info->num_chips)) {
+        spdlog::error("DFPExecutor {}: run_dfp() device num_chips {} does not match DFPContext num_chips {}",
+                      device_id, num_chips, d->info->num_chips);
+        return false;
+    }
+
     n_models = d->info->num_models;
     uint8_t driver_ctx_id = d->device2context_table[device_id];
 
@@ -630,8 +731,9 @@ bool DFPExecutor::run_dfp(ExecutorTask* task)
         ModelThreadPair* p = thread_pairs[i];
 
         // wait for input and output loop done
-        std::unique_lock<std::mutex> tlock(p->m_ready);
-        p->s_done.wait(tlock, [p] { return (p->num_loop_ready == 0); });
+        if(p->num_loop_ready.wait_for_value(0) == false){
+            spdlog::warn("DFPExecutor {}: num_loop_ready.wait_for_value(0) was killed early ModelThreadPair {}", device_id, i);
+        }
     }
 
     spdlog::debug("DFPExecutor {}: all threads finished", device_id);
@@ -698,7 +800,7 @@ bool DFPExecutor::has_any_threadpair_hit_frame_limit() const
             spdlog::warn("DFPExecutor {}: has_any_threadpair_hit_frame_limit() found nullptr ModelThreadPair at index {}", device_id, i);
             return true;
         } else {
-            if(p->a_input_done.load(std::memory_order_acquire) || p->a_stop_in.load(std::memory_order_acquire) != ModelThreadPair::SF_RUN){
+            if(p->a_input_done == true || p->a_stop_in != ModelThreadPair::SF_RUN){
                 return true;
             }
         }
@@ -724,14 +826,15 @@ ModelThreadPair::ModelThreadPair(const DFPExecutor *my_dfpexec_) : my_dfpexec(my
     m_dumpster_lock = nullptr;
     dumpster_ptr = nullptr;
 
-    a_stop_out.store(SF_RUN, std::memory_order_release);
-    TSAN_RELEASE(&a_stop_out);
-    a_stop_in.store(SF_RUN, std::memory_order_release);
-    TSAN_RELEASE(&a_stop_in);
+    a_stop_out = SF_RUN;
+    a_stop_in = SF_RUN;
 
-    a_input_done.store(true, std::memory_order_release);
+    a_input_done = true;
+    enter_out_flag = false;
+    enter_in_flag = false;
+    num_loop_ready = 0;
 
-    inflights = new BQExtFlag<ContextClient*>(UINT_MAX, &a_input_done, true);
+    inflights = new BQExtFlagX<ContextClient*>(UINT_MAX, &a_input_done, true);
 
     ithread = new std::thread(&ModelThreadPair::input_loop, this);
     othread = new std::thread(&ModelThreadPair::output_loop, this);
@@ -743,11 +846,8 @@ ModelThreadPair::~ModelThreadPair()
 
     {
         std::unique_lock<std::mutex> tlock(m_flags);
-        a_stop_out.store(SF_TERMINATE, std::memory_order_release); // terminate
-        TSAN_RELEASE(&a_stop_out);
-        a_stop_in.store(SF_TERMINATE, std::memory_order_release); // terminate
-        TSAN_RELEASE(&a_stop_in);
-        s_stop.notify_all(); // wake up the threads
+        a_stop_out = SF_TERMINATE;
+        a_stop_in = SF_TERMINATE;
     }
 
     // wait for them to finish
@@ -768,7 +868,7 @@ ModelThreadPair::~ModelThreadPair()
 bool ModelThreadPair::assign_and_start(ExecutorTask* task, int model_id_)
 {
 
-    if(a_input_done.load(std::memory_order_acquire) == false) {
+    if(a_input_done == false) {
         spdlog::critical("ModelThreadPair {}-{}: input done flag is not set, this should not happen!", driver_ctx_id, model_id_);
         return false;
     }
@@ -779,13 +879,10 @@ bool ModelThreadPair::assign_and_start(ExecutorTask* task, int model_id_)
 
     frame_limit = task->frame_limit;
     time_limit = task->time_limit;
-    stop_on_empty = task->stop_on_empty;
-    a_input_done.store(false, std::memory_order_release); // reset input done flag
+    a_input_done = false; // reset input done flag
 
-    a_stop_out.store(SF_RUN, std::memory_order_release);
-    TSAN_RELEASE(&a_stop_out);
-    a_stop_in.store(SF_RUN, std::memory_order_release);
-    TSAN_RELEASE(&a_stop_in);
+    a_stop_out = SF_RUN;
+    a_stop_in = SF_RUN;
 
     spdlog::debug("ModelThreadPair {}-{}: assigned DFPContext with hash {}", driver_ctx_id, model_id, MX::sha512::to_base64(d->hash).c_str());
 
@@ -813,12 +910,9 @@ void ModelThreadPair::halt()
     // set the stop flag to 'soft' halt
     {
         std::unique_lock<std::mutex> tlock(m_flags);
-        a_stop_out.store(SF_HALT, std::memory_order_release); // soft halt
-        TSAN_RELEASE(&a_stop_out);
-        a_stop_in.store(SF_HALT, std::memory_order_release); // soft halt
-        TSAN_RELEASE(&a_stop_in);
+        a_stop_out = SF_HALT; // soft halt
+        a_stop_in = SF_HALT; // soft halt
         inflights->notify(); // wake up the inflight tracker
-        s_stop.notify_all(); // wake up the threads
         inflights->notify(); // wake up the inflight tracker
     }
 
@@ -837,12 +931,9 @@ void ModelThreadPair::force_halt()
     // set the stop flag to 'soft' halt
     {
         std::unique_lock<std::mutex> tlock(m_flags);
-        a_stop_out.store(SF_FORCE_HALT, std::memory_order_release); // force halt
-        TSAN_RELEASE(&a_stop_out);
-        a_stop_in.store(SF_FORCE_HALT, std::memory_order_release); // force halt
-        TSAN_RELEASE(&a_stop_in);
+        a_stop_out = SF_FORCE_HALT; // force halt
+        a_stop_in = SF_FORCE_HALT; // force halt
         inflights->notify(); // wake up the inflight tracker
-        s_stop.notify_all(); // wake up the threads
         inflights->notify(); // wake up the inflight tracker
         tlock.unlock();
     }
@@ -863,8 +954,7 @@ void ModelThreadPair::input_loop()
 
         // wait for both input and output threads to get ready
         std::unique_lock<std::mutex> dlock(m_ready);
-        s_loop_ready.wait(dlock, [this] { return (num_loop_ready == 2) || (a_stop_in.load(std::memory_order_consume) == SF_TERMINATE); });
-        TSAN_ACQUIRE(&a_stop_in);
+        s_loop_ready.wait(dlock, [this] { return (num_loop_ready == 2) || (a_stop_in == SF_TERMINATE); });
         if(num_loop_ready < 2) {
             // if we got here, it means the program is being shutdown
             // by the main thread somehwere, so we should exit this loop
@@ -878,7 +968,6 @@ void ModelThreadPair::input_loop()
 
         // now we officialy enter the input loop
         enter_in_flag = true;
-        s_enter_in.notify_all();
 
         // now continuously pull inputs from the ifmap queues
         uint64_t frame = 0;
@@ -896,18 +985,7 @@ void ModelThreadPair::input_loop()
 
             spdlog::debug("ModelThreadPair {}-{}: input stream loop with frame limit {}", driver_ctx_id, model_id, frame_limit);
 
-            while(frame < frame_limit && a_stop_in.load(std::memory_order_consume) == SF_RUN) {
-
-                TSAN_ACQUIRE(&a_stop_in);
-
-                // check stop on empty condition
-                if(stop_on_empty) {
-                    if(mctx->ifmap_queue->size() == 0) {
-                        // queue is empty, so break
-                        spdlog::debug("ModelThreadPair {}-{}: input loop hit stop_on_empty", driver_ctx_id, model_id);
-                        break;
-                    }
-                }
+            while(frame < frame_limit && a_stop_in == SF_RUN) {
 
                 if(mctx->ifmap_queue->pop_timeout_with_ctxpush(item, 1000, driver_ctx_id) == false) {
 
@@ -982,15 +1060,7 @@ void ModelThreadPair::input_loop()
                     time_limit = 1000; // 1 second
                 }
 
-                while(a_stop_in.load(std::memory_order_consume) == SF_RUN) {
-                    TSAN_ACQUIRE(&a_stop_in);
-                    // check stop on empty condition
-                    if(stop_on_empty) {
-                        if(mctx->ifmap_queue->size() == 0) {
-                            // queue is empty, so break
-                            break;
-                        }
-                    }
+                while(a_stop_in == SF_RUN) {
 
                     // pop with timeout (and force the timeout even if other thread pairs are still running)
                     if(mctx->ifmap_queue->pop_timeout_with_ctxpush(item, time_limit, driver_ctx_id) == false) {
@@ -1023,15 +1093,7 @@ void ModelThreadPair::input_loop()
                 } //end while
             }
             else {
-                while(frame < frame_limit && a_stop_in.load(std::memory_order_consume) == SF_RUN) {
-                    TSAN_ACQUIRE(&a_stop_in);
-                    // check stop on empty condition
-                    if(stop_on_empty) {
-                        if(mctx->ifmap_queue->size() == 0) {
-                            // queue is empty, so break
-                            break;
-                        }
-                    }
+                while(frame < frame_limit && a_stop_in == SF_RUN) {
 
                     // pop with timeout
                     if(mctx->ifmap_queue->pop_timeout_with_ctxpush(item, time_limit, driver_ctx_id) == false) {
@@ -1071,33 +1133,30 @@ void ModelThreadPair::input_loop()
             } //end if time_limit == 0
         } // end if frame_limit == 0
 
-        a_input_done.store(true, std::memory_order_release); // reset input done flag
+        a_input_done = true; // reset input done flag
         inflights->notify(); // wake up the inflight tracker
 
         spdlog::debug("ModelThreadPair {}-{}: input loop finished readout. Final frame count: {}", driver_ctx_id, model_id, total_frames);
 
 
         // make sure we already officially entered the output loop
-        std::unique_lock<std::mutex> enter_lock(m_enter_out);
-        s_enter_out.wait(enter_lock, [this] { return enter_out_flag; });
+        if(enter_out_flag.wait_for_value(true) == false) {
+            spdlog::error("ModelThreadPair {}-{}: input loop failed to enter output loop due to killed enter_out_flag, terminating", driver_ctx_id, model_id);
+            num_loop_ready--;
+            inflights->notify();
+            break;
+        }
         enter_out_flag = false;
 
         spdlog::debug("ModelThreadPair {}-{}: input loop make sure we already officially entered the output loop", driver_ctx_id, model_id);
 
         // if we got here, we either timed out or hit the frame limit
-        {
-            // notify main thread that input is done
-            std::unique_lock<std::mutex> tlock(m_ready);
-            num_loop_ready--;
-            s_done.notify_all();
-            tlock.unlock();
-        }
+        num_loop_ready--;
 
         // check for termination
         {
             std::unique_lock<std::mutex> tlock(m_flags);
-            if(a_stop_in.load(std::memory_order_consume) == SF_TERMINATE) { // terminate
-                TSAN_ACQUIRE(&a_stop_in);
+            if(a_stop_in == SF_TERMINATE) { // terminate
                 tlock.unlock();
                 spdlog::info("ModelThreadPair {}-{}: input loop terminating", driver_ctx_id, model_id);
                 inflights->notify(); // wake up the inflight tracker
@@ -1125,8 +1184,7 @@ void ModelThreadPair::output_loop()
 
         // wait for both input and output threads to get ready
         std::unique_lock<std::mutex> dlock(m_ready);
-        s_loop_ready.wait(dlock, [this] { return (num_loop_ready == 2) || (a_stop_out.load(std::memory_order_consume) == SF_TERMINATE); });
-        TSAN_ACQUIRE(&a_stop_out);
+        s_loop_ready.wait(dlock, [this] { return (num_loop_ready == 2) || (a_stop_out == SF_TERMINATE); });
         if(num_loop_ready < 2) {
             // if we got here, it means the program is being shutdown
             // by the main thread somehwere, so we should exit this loop
@@ -1140,7 +1198,6 @@ void ModelThreadPair::output_loop()
 
         // now we officialy enter the input loop
         enter_out_flag = true;
-        s_enter_out.notify_all();
 
         port_infos_t* p = d->info->port_info[model_id];
 
@@ -1159,11 +1216,8 @@ void ModelThreadPair::output_loop()
         // ofmap thread doesn't do timeouts/frame limits, because
         // we don't want to lose any data that the chip has produced
         //          &0x1 = FORCE_HALT or TERMINATE
-        while( (a_input_done.load(std::memory_order_consume) == false || inflights->size() > 0)
-               && (a_stop_out.load(std::memory_order_consume) & 0x1) == SF_RUN) {
-
-            TSAN_ACQUIRE(&a_input_done);
-            TSAN_ACQUIRE(&a_stop_out);
+        while( (a_input_done == false || inflights->size() > 0)
+               && (a_stop_out.load() & 0x1) == SF_RUN) {
 
             // pop the next destination from the inflight tracker
             if(inflights->pop(dest_client)) {
@@ -1279,23 +1333,21 @@ void ModelThreadPair::output_loop()
         spdlog::debug("ModelThreadPair {}-{} O: output loop finished readout. Final frame count: {}", driver_ctx_id, model_id, total_frames);
 
         // make sure we already officially entered the input loop
-        std::unique_lock<std::mutex> enter_lock(m_enter_in);
-        s_enter_in.wait(enter_lock, [this] { return enter_in_flag; });
+        if(enter_in_flag.wait_for_value(true) == false) {
+            spdlog::error("ModelThreadPair {}-{} O: output loop failed to enter input loop due to killed enter_in_flag, terminating", driver_ctx_id, model_id);
+            num_loop_ready--;
+            break;
+        }
         enter_in_flag = false;
 
         spdlog::debug("ModelThreadPair {}-{}: output loop make sure we already officially entered the input loop", driver_ctx_id, model_id);
 
-        {
-            // notify main thread that output is done
-            std::unique_lock<std::mutex> tlock(m_ready);
-            num_loop_ready--;
-            s_done.notify_all();
-        }
+        num_loop_ready--;
 
         // first check for termination
         {
             std::unique_lock<std::mutex> tlock(m_flags);
-            if(a_stop_out.load(std::memory_order_consume) == SF_TERMINATE) { // terminate
+            if(a_stop_out == SF_TERMINATE) { // terminate
                 tlock.unlock();
                 spdlog::info("ModelThreadPair {}-{}: output loop terminating", driver_ctx_id, model_id);
                 break;

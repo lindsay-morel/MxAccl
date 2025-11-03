@@ -11,7 +11,6 @@
 #pragma once
 #include <string>
 #include <stdint.h>
-#include <atomic>
 #include <iostream>
 #include <unordered_map>
 #include <filesystem>
@@ -24,10 +23,10 @@
 #include <memx/accl/MxModel.h>
 #include <memx/accl/utils/path.h>
 #include <memx/accl/utils/mxTypes.h>
-
-using mx_retval_t = MX::Utils::mx_retval;
+#include <memx/accl/utils/locked_var.h>
 
 using namespace MX::RPC;
+using namespace MX::Utils;
 
 namespace MX
 {
@@ -45,6 +44,7 @@ class DeviceManager
     MEMX_API_EXPORT void print_devices_info();
 
     float              get_power(int device_id);
+    float              get_pressure(int device_id);
     float              get_max_temperature(int device_id);
     std::vector<float> get_chip_temperatures(int device_id);
 
@@ -58,7 +58,7 @@ class DeviceManager
 
     int all_devices_count;
 
-    std::atomic_bool discover_done;
+    LockedVar<bool> discover_done;
 
     bool discover_devices_direct();
     bool discover_devices_remote(Client* client);

@@ -15,7 +15,6 @@
 #include <cstdio>
 #include <thread>
 #include <functional>
-#include <atomic>
 #include <cstring>
 #include <unordered_set>
 #include <filesystem>
@@ -26,13 +25,15 @@
 #include <memx/accl/dfp.h>
 #include <memx/accl/client.h>
 #include <memx/accl/prepost.h>
-#include <memx/accl/utils/general.h>
+#include <memx/accl/utils/blocky_queue.h>
 #include <memx/accl/utils/thread_pool.h>
 #include <memx/accl/utils/featureMap.h>
 #include <memx/accl/utils/errors.h>
 #include <memx/accl/utils/mxTypes.h>
+#include <memx/accl/utils/locked_var.h>
 
 using namespace std;
+using namespace MX::Utils;
 
 namespace MX
 {
@@ -104,7 +105,7 @@ class MxModel : public ModelBase
     int group_id_; // unique id of MXA
     int num_streams_;// num streams connected to this model
     Dfp::DfpObject* dfp_; // Dfp object
-    MX::Utils::fifo_queue<int> stream_queue; //queue to store stream ids for ifmaps
+    MX::Utils::BlockyQueue<int> stream_queue; //queue to store stream ids for ifmaps
 
     std::array<bool, 2> use_model_shape;
 
@@ -164,7 +165,7 @@ class MxModel : public ModelBase
     std::mutex input_task_mutex;
     std::condition_variable input_task_cv;
 
-    atomic_int input_thread_counter;
+    LockedVar<int> input_thread_counter;
     std::mutex input_thread_mutex;
     std::condition_variable input_thread_cv;
 
@@ -187,7 +188,7 @@ class MxModel : public ModelBase
     int in_frame_cnt = 0;
 
     //Queue to pass stream id and context id from send to recv functions
-    MX::Utils::fifo_queue<std::pair<int, int>> pair_stream_context_queue;
+    MX::Utils::BlockyQueue<std::pair<int, int>> pair_stream_context_queue;
 
 
     //Pre-processing model items
@@ -242,9 +243,9 @@ class MxModel : public ModelBase
     void model_stop();
     void model_wait();
 
-    atomic_bool model_run; // flag to specify if model is running
-    atomic_bool model_recv_run; // flag to specify if model recv thread is running
-    atomic_bool model_manual_run; // flag to specify manual threadin is opted out
+    LockedVar<bool> model_run; // flag to specify if model is running
+    LockedVar<bool> model_recv_run; // flag to specify if model recv thread is running
+    LockedVar<bool> model_manual_run; // flag to specify manual threadin is opted out
 
     void model_manual_start();
     void model_manual_stop();

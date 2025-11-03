@@ -12,7 +12,6 @@
 #include <string>
 #include <cstdint>
 #include <thread>
-#include <atomic>
 #include <vector>
 #include <string>
 #include <map>
@@ -67,8 +66,12 @@ class Client
     float get_inst_max_temp(int32_t device_id);
     float get_avg_power(int32_t device_id);
     float get_inst_power(int32_t device_id);
+    float get_pressure(int32_t device_id);
     std::vector<float> get_avg_temp_per_chip(int32_t device_id);
     std::vector<float> get_inst_temp_per_chip(int32_t device_id);
+
+    // setting power mode
+    bool set_power_mode(int32_t device_id, uint16_t freq_mhz);
 
     // for getting device info from the server
     std::vector<MX::RPC::device_info_t> get_device_infos();

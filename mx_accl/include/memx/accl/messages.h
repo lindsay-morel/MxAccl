@@ -26,21 +26,19 @@ namespace RPC
  * They provide fine-grained control over input/output buffering and processing efficiency.
  *
  * @var SchedulerOptions::frame_limit
- * The maximum number of frames that can be enqueued before the associated DFP is swapped out.
+ * The number of frames to process before the DFP is resheduled. Default: 20
 
  * @var SchedulerOptions::time_limit
- * The maximum time duration (in milliseconds) the DFP is allowed to run before being swapped out.
+ * The maximum idle time (in milliseconds) to wait for new input before forcibly rescheduling the DFP. Default: 250ms
 
  * @var SchedulerOptions::stop_on_empty
- * If set to true, the DFP is swapped out immediately when the input queue becomes empty.
- * This is useful for reducing idle resource usage in multi-client scenarios.
+ * !(REMOVED, DO NOT USE)! If set to true, the DFP is swapped out immediately when the input queue becomes empty. Default: false
 
  * @var SchedulerOptions::ifmap_queue_size
- * Capacity of the input feature map (ifmap) queue used by the DFP. 
- * This queue is shared across all clients of the DFP.
+ * Capacity of the input feature map (ifmap) queue used by the DFP, shared by all clients. Default: 16
 
  * @var SchedulerOptions::ofmap_queue_size
- * Capacity of the per-client output feature map (ofmap) queues.
+ * Capacity of the per-client output feature map (ofmap) queues. Default: 21 (frame_limit + 1)
  */
 struct SchedulerOptions {
     uint32_t  frame_limit;      
@@ -96,6 +94,9 @@ struct ClientOptions {
 
  * @var device_info_t::can_get_power_data
  * Indicates whether power telemetry (e.g., voltage, frequency) can be retrieved from the device.
+ 
+ * @var device_info_t::is_usb
+ * If true, this is an USB device, else it is a PCIe device.
 
  * @var device_info_t::freqs
  * Operating frequency (in MHz) of each chip on the device. The vector contains one entry per chip.
@@ -104,13 +105,14 @@ struct ClientOptions {
  * Supply voltage (in millivolts) applied uniformly across all chips.
  */
 struct device_info_t {
-    int32_t               chip_count;         
-    int32_t               current_config;     
-    int32_t               num_groups;         
-    int32_t               chips_per_group;    
-    bool                  can_get_power_data; 
-    std::vector<uint16_t> freqs;              
-    uint16_t              volt;               
+    int32_t               chip_count;
+    int32_t               current_config;
+    int32_t               num_groups;
+    int32_t               chips_per_group;
+    bool                  can_get_power_data;
+    bool                  is_usb;
+    std::vector<uint16_t> freqs;
+    uint16_t              volt;
 };
 
 
@@ -125,6 +127,9 @@ typedef enum : uint32_t {
     MSG_TYPE_STATUS,
     MSG_TYPE_GET_TEMP_POWER,
     MSG_TYPE_GET_DEV_INFO,
+    MSG_TYPE_GET_UTILIZATION,
+    MSG_TYPE_SET_POWERMODE,
+    MSG_TYPE_INVALID_MAX
 } msg_type_t;
 
 // function to decode msg_type_t to a string with the enum name
@@ -140,6 +145,8 @@ inline const char* msgtype2str(msg_type_t t)
         case MSG_TYPE_STATUS: return "MSG_TYPE_STATUS";
         case MSG_TYPE_GET_TEMP_POWER: return "MSG_TYPE_GET_TEMP_POWER";
         case MSG_TYPE_GET_DEV_INFO: return "MSG_TYPE_GET_DEV_INFO";
+        case MSG_TYPE_GET_UTILIZATION: return "MSG_TYPE_GET_UTILIZATION";
+        case MSG_TYPE_SET_POWERMODE: return "MSG_TYPE_SET_POWERMODE";
         default: return "UNKNOWN_MSG_TYPE";
     }
 }
@@ -168,7 +175,7 @@ struct MsgSubmitDfp {
     // Scheduler options
     uint32_t time_limit;
     uint64_t frame_limit;
-    uint8_t  stop_on_empty;
+    uint8_t  stop_on_empty; // (REMOVED, DO NOT USE)
     uint32_t ifmap_queue_size;
     uint32_t ofmap_queue_size;
 
@@ -177,7 +184,7 @@ struct MsgSubmitDfp {
     float    fps_target;
 
     // Device IDs to use
-    int32_t  len_devices_to_use;
+    int32_t   len_devices_to_use;
     int32_t*  devices_to_use;
 
     // DFP bytes
@@ -202,6 +209,11 @@ struct MsgGetTempPower {
     } measure_mode;   // Measure mode: averaged or instant
 };
 
+// set power mode (frequency for device) packet
+struct MsgSetPowermode {
+    int32_t  device_id;    // Device ID to set power mode
+    uint16_t freq_mhz;     // Frequency in MHz to set
+};
 
 // returned temp/power packets
 struct MsgTempPower {
@@ -246,11 +258,15 @@ typedef enum : uint32_t {
     DFP_CLIENT_ADD_FAILED = 304,
     DFP_SUBMODEL_ID_OUT_OF_BOUNDS = 305,
     DFP_TOO_MANY_OPEN_CONTEXTS = 306,
+    DFP_NO_VALID_CONTEXTS = 307,
     DFP_OK_BUT_IGNORING_OPTIONS = 333,
 
     // Info polling messages
     INFO_DEVICE_DOESNT_DO_POWER = 400,
-    INFO_DEVICE_IS_LOCAL_LOCKED = 401
+    INFO_DEVICE_IS_LOCAL_LOCKED = 401,
+
+    // power mode issues
+    SET_POWERMODE_INVALID_OPTION = 500
 
 } status_t;
 
@@ -273,11 +289,13 @@ inline const char* status2str(status_t s)
         case DFP_PARSE_ERROR: return "DFP_PARSE_ERROR";
         case DFP_CHECKSUM_COLLISION: return "DFP_CHECKSUM_COLLISION";
         case DFP_CLIENT_ADD_FAILED: return "DFP_CLIENT_ADD_FAILED";
+        case DFP_NO_VALID_CONTEXTS: return "DFP_NO_VALID_CONTEXTS";
         case DFP_SUBMODEL_ID_OUT_OF_BOUNDS: return "DFP_SUBMODEL_ID_OUT_OF_BOUNDS";
         case DFP_TOO_MANY_OPEN_CONTEXTS: return "DFP_TOO_MANY_OPEN_CONTEXTS";
         case DFP_OK_BUT_IGNORING_OPTIONS: return "DFP_OK_BUT_IGNORING_OPTIONS";
         case INFO_DEVICE_DOESNT_DO_POWER: return "INFO_DEVICE_DOESNT_DO_POWER";
         case INFO_DEVICE_IS_LOCAL_LOCKED: return "INFO_DEVICE_IS_LOCAL_LOCKED";
+        case SET_POWERMODE_INVALID_OPTION: return "SET_POWERMODE_INVALID_OPTION";
         default: return "UNKNOWN_STATUS";
     }
 }

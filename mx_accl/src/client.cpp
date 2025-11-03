@@ -8,7 +8,6 @@
 #include <string>
 #include <cstdint>
 #include <thread>
-#include <atomic>
 #include <vector>
 #include <string>
 #include <filesystem>
@@ -482,6 +481,11 @@ bool Client::connect_dfp(size_t num_dfp_bytes, uint8_t* dfp_bytes, int32_t model
         if (status.s == DFP_OK_BUT_IGNORING_OPTIONS) {
             spdlog::debug("[Client] DFP OK but you weren't the first to submit this model, so we ignored SchedulerOptions");
         }
+        else if (status.s == DFP_WRONG_NUMBER_OF_CHIPS) {
+            spdlog::error("[Client] Error: {}. Please check that the number of chips this DFP is compiled for matches the target device(s)", status2str(status.s));
+            throw std::runtime_error("DFP_WRONG_NUMBER_OF_CHIPS");
+            return false;
+        }
         else if (status.s != OK) {
             spdlog::error("[Client] Error: {}, Data: {}", status2str(status.s), status.dat);
             delete [] devices_to_use_arr;
@@ -532,6 +536,10 @@ bool Client::connect_dfp(size_t num_dfp_bytes, uint8_t* dfp_bytes, int32_t model
     catch (std::exception &e) {
         spdlog::error("[Client] Exception: {}", e.what());
         delete [] devices_to_use_arr;
+
+        // throw it back up so we don't print a ton of extra layers of errors
+        throw std::runtime_error(e.what());
+
         return false;
     }
 
@@ -1059,6 +1067,139 @@ float Client::get_inst_power(int32_t device_id)
     return power;
 }
 
+
+float Client::get_pressure(int32_t device_id)
+{
+if (UNLIKELY(ctrl_socket == nullptr)) {
+        spdlog::error("[Client] No ctrl_socket connection to get_pressure from");
+        return 0.0f;
+    }
+
+    // Acquire the ctrl mutex
+    std::lock_guard<std::mutex> lock(m_mutex);
+
+    Socket* socket = static_cast<Socket*>(ctrl_socket);
+
+    mxasio::error_code         error;
+    size_t rbytes;
+
+    // Prepare the header and command
+    MsgHeader header;
+    header.client_id = my_client_id;
+    header.msg_type = MSG_TYPE_GET_UTILIZATION;
+
+    // Send the header
+    socket->write(mxasio::buffer(&header, sizeof(header)), error);
+    if(UNLIKELY(error)) {
+        spdlog::error("[Client] Error writing get_pressure header: {}", error.message());
+        return -3000.0f;
+    }
+    socket->write(mxasio::buffer(&device_id, sizeof(int32_t)), error);
+    if(UNLIKELY(error)) {
+        spdlog::error("[Client] Error writing get_pressure device_id: {}", error.message());
+        return -3000.0f;
+    }
+
+    // Read the response header
+    socket->read(mxasio::buffer(&header, sizeof(header)));
+    if(LIKELY(header.msg_type == MSG_TYPE_STATUS)) {
+
+        // read the status message
+        MsgStatus status;
+        rbytes = socket->read(mxasio::buffer(&status, sizeof(status)), error);
+        if(UNLIKELY(rbytes == 0 || error)) {
+            spdlog::error("[Client] Error reading status message: {}", error.message());
+            return -3000.0f;
+        }
+
+        if(UNLIKELY(status.s != OK)) {
+            spdlog::error("[Client] Expected OK status message, got: {}", status2str(status.s));
+            return -3000.0f;
+        }
+
+        // utilization value is status.dat
+        // reinterpret the u32 bits directly as float bits
+        float pressure = 0.0f;
+        std::memcpy(&pressure, &(status.dat), sizeof(float));
+
+        return pressure;
+    }
+    else {
+        spdlog::error("[Client] Expected STATUS message, got: {}", msgtype2str(header.msg_type));
+        return -3000.0f;
+    }
+}
+
+//--------------------------------------------------------------------------------------------
+//--------------------------------------------------------------------------------------------
+// SET POWER MODE
+//--------------------------------------------------------------------------------------------
+//--------------------------------------------------------------------------------------------
+
+bool Client::set_power_mode(int32_t device_id, uint16_t freq_mhz)
+{
+
+    if (UNLIKELY(ctrl_socket == nullptr)) {
+        spdlog::error("[Client] No ctrl_socket connection to get_pressure from");
+        return 0.0f;
+    }
+
+    // Acquire the ctrl mutex
+    std::lock_guard<std::mutex> lock(m_mutex);
+
+    Socket* socket = static_cast<Socket*>(ctrl_socket);
+
+    mxasio::error_code         error;
+    size_t rbytes;
+
+    // Prepare the header and command
+    MsgHeader header;
+    header.client_id = my_client_id;
+    header.msg_type = MSG_TYPE_SET_POWERMODE;
+
+    // Send the header
+    socket->write(mxasio::buffer(&header, sizeof(header)), error);
+    if(UNLIKELY(error)) {
+        spdlog::error("[Client] Error writing set_power_mode header: {}", error.message());
+        return false;
+    }
+
+    // send device_id and freq_mhz packet
+    socket->write(mxasio::buffer(&device_id, sizeof(int32_t)), error);
+    if(UNLIKELY(error)) {
+        spdlog::error("[Client] Error writing set_power_mode device_id: {}", error.message());
+        return false;
+    }
+    socket->write(mxasio::buffer(&freq_mhz, sizeof(uint16_t)), error);
+    if(UNLIKELY(error)) {
+        spdlog::error("[Client] Error writing set_power_mode freq_mhz: {}", error.message());
+        return false;
+    }
+
+    // Read the response header
+    socket->read(mxasio::buffer(&header, sizeof(header)));
+    if(LIKELY(header.msg_type == MSG_TYPE_STATUS)) {
+
+        // read the status message
+        MsgStatus status;
+        rbytes = socket->read(mxasio::buffer(&status, sizeof(status)), error);
+        if(UNLIKELY(rbytes == 0 || error)) {
+            spdlog::error("[Client] set_power_mode: Error reading status reply message: {}", error.message());
+            return false;
+        }
+
+        if(UNLIKELY(status.s != OK)) {
+            spdlog::error("[Client] set_power_mode: Expected OK status reply message, got: {}", status2str(status.s));
+            return false;
+        }
+    }
+    else {
+        spdlog::error("[Client] set_power_mode: Expected STATUS message, got: {}", msgtype2str(header.msg_type));
+        return false;
+    }
+
+    return true;
+}
 
 
 //--------------------------------------------------------------------------------------------

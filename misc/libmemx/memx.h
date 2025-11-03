@@ -24,7 +24,7 @@ extern "C" {
  *  y: top level memx api changed,
  *  z: minor bug fix.
  */
-#define MEMX_LIBRARY_VERSION "2.10.1"
+#define MEMX_LIBRARY_VERSION "2.11.2"
 
 /***************************************************************************//**
  * common
@@ -92,6 +92,8 @@ typedef enum _memx_get_feature_opcode {
   OPCODE_GET_INTERFACE_INFO         = 16,
   OPCODE_GET_IFMAP_CONTROL          = 17,
   OPCODE_GET_HW_INFO                = 18,
+  OPCODE_GET_QSPI_RESET_RELEASE     = 19,
+  OPCODE_GET_MPU_UTILIZATION        = 20,
   OPCODE_GET_FEATURE_MAX
 } memx_get_feature_opcode;
 
@@ -103,6 +105,7 @@ typedef enum _memx_set_feature_opcode {
   OPCODE_SET_POWER_THRESHOLD        = 4,
   OPCODE_SET_POWER_ALERT_FREQUENCY  = 5,
   OPCODE_SET_IFMAP_CONTROL          = 6,
+  OPCODE_SET_QSPI_RESET_RELEASE     = 7,
   OPCODE_SET_FEATURE_MAX
 } memx_set_feature_opcode;
 
@@ -111,6 +114,13 @@ typedef enum _memx_selftest_opcode {
   OPCODE_SELFTEST_PCIE_BANDWIDTH    = 1,
   OPCODE_SELFTEST_MAX
 } memx_selftest_opcode;
+
+typedef enum _memx_devioctrl_opcode {
+  OPCODE_DEVIOCTRL_I2C_RW              = 0,
+  OPCODE_DEVIOCTRL_GPIO_R              = 1,
+  OPCODE_DEVIOCTRL_GPIO_W              = 2,
+  OPCODE_DEVIOCTRL_MAX
+} memx_devioctrl_opcode;
 
 typedef enum {
 	MEMX_PS0, 	//Operational power state (I/O Support)
@@ -188,7 +198,7 @@ typedef struct memx_fmap_buf_t {
  * driver. Constant value which should be referenced only and not be modified
  * manually.
  */
-#define MEMX_DEVICE_GROUP_MAX_NUMBER (4)
+#define MEMX_DEVICE_GROUP_MAX_NUMBER (128)
 
 /**
  * @brief Option to configure model input or output format to 32-bits floating point.
@@ -303,6 +313,8 @@ typedef enum _memx_command {
   MEMX_CMD_GET_FW_DOWNLOAD_STATUS = 1,
   MEMX_CMD_CONFIG_MPU_GROUP = 2,
   MEMX_CMD_RESET_DEVICE = 3,
+  MEMX_CMD_SET_QSPI_RESET_RELEASE = 4,
+  MEMX_CMD_GET_QSPI_RESET_RELEASE = 5,
   MEMX_CMD_MAX,
 } memx_command;
 
@@ -901,6 +913,18 @@ MEMX_API_EXPORT memx_status memx_set_abort_read(uint8_t model_id);
  * @return 0 on success, otherwise error code
  */
 MEMX_API_EXPORT memx_status memx_self_test(uint8_t group_id, uint8_t chip_id, memx_selftest_opcode opcode, void* buffer);
+
+/**
+ * @brief Device IO control for specific device and chip.
+ *
+ * @param group_id Group(device) id.
+ * @param chip_id  Chip id.
+ * @param opcode   Operation code for device io
+ * @param buffer   User buffer pointer for device io paramter.
+ *
+ * @return 0 on success, otherwise error code
+ */
+MEMX_API_EXPORT memx_status memx_devio_control(uint8_t group_id, uint8_t chip_id, memx_devioctrl_opcode opcode, void* buffer);
 
 /**
  * @brief Download weight memory and model to device based on given DFP Cache Entry

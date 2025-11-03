@@ -11,7 +11,6 @@
 #pragma once
 #include <string>
 #include <vector>
-#include <atomic>
 #include <deque>
 #include <stack>
 #include <thread>
@@ -29,13 +28,14 @@
 #include "contexts.h"
 
 #include <memx/accl/messages.h>
+#include <memx/accl/utils/locked_var.h>
 #include <memx/accl/utils/mxTypes.h>
 #include <memx/accl/utils/blocky_queue.h>
 
 
 using mxasio::ip::tcp;
 
-using namespace MX::RPC; // BlockyQueue
+using namespace MX::Utils; // BlockyQueue
 
 namespace MX
 {
@@ -45,12 +45,11 @@ namespace Manager
 // these tasks get queued up by the Scheduler thread
 // into each Executor thread, which then runs them
 struct ExecutorTask {
-    ExecutorTask() : dfp_ctx(nullptr), allowed_device(-1), frame_limit(0), time_limit(0), stop_on_empty(false), freq_option(MX::Types::MxFrequencyOption::FREQ_USE_CONF) {}
+    ExecutorTask() : dfp_ctx(nullptr), allowed_device(-1), frame_limit(0), time_limit(0), freq_option(MX::Types::MxFrequencyOption::FREQ_USE_CONF) {}
     DFPContext* dfp_ctx;
     int allowed_device;
     uint64_t frame_limit;
     uint32_t time_limit;
-    bool stop_on_empty;
     MX::Types::MxFrequencyOption freq_option;
 };
 
@@ -86,7 +85,8 @@ class DFPExecutor
 {
 
   public:
-    DFPExecutor(uint8_t device_id_, const std::vector<device_info_t>* devinfos_, const BlockyQueue<ExecutorTask*> *my_exec_queue_);
+    DFPExecutor(uint8_t device_id_, std::vector<device_info_t>* devinfos_,
+            const BlockyQueue<ExecutorTask*> *my_exec_queue_, unsigned int hw_monitor_interval_ms = 500);
     ~DFPExecutor();
 
     // so that ModelThreadPair can touch DFPExecutor's privates
@@ -118,24 +118,27 @@ class DFPExecutor
     // get temps for each chip on this device (const ref to this->)
     const std::vector<float> &avg_all_temps();
     const std::vector<float>  inst_all_temps();
-
+    
     // get powers (if possible)
+    bool can_get_power;
     float avg_power();
     float inst_power();
 
-    bool can_get_power; // whether this device can get power data
+    // get utilization (pressure)
+    float avg_pressure();
 
+    // get number of chips on this device
     uint8_t get_num_chips();
 
-    // set the power mode for this device
-    bool set_power_mode(MX::Types::MxFrequencyOption fop);
+    // public request to set power mode
+    void set_next_power_mode(MX::Types::MxFrequencyOption fop);
 
   private:
     const BlockyQueue<ExecutorTask*> *my_exec_queue;
 
     bool open_device(DFPContext* d);
     uint8_t device_id;
-    const std::vector<device_info_t>* devinfos;
+    std::vector<device_info_t>* devinfos;
 
     int n_models; // used later!
     bool has_any_threadpair_hit_frame_limit() const;
@@ -143,6 +146,15 @@ class DFPExecutor
     uint8_t num_chips; // number of chips on this device (set in open_device())
 
     std::map<int, ModelThreadPair*> thread_pairs;
+
+    //--------------------------------------------------------------------------------
+    std::mutex set_freq_mutex;
+    MX::Types::MxFrequencyOption current_freq_option;
+    MX::Types::MxFrequencyOption next_freq_option;
+
+    // set the power mode for this device
+    bool set_power_mode(MX::Types::MxFrequencyOption fop);
+
 
     //--------------------------------------------------------------------------------
 
@@ -164,12 +176,13 @@ class DFPExecutor
     // hardware monitor thread's loop function
     void hw_monitor_loop();
     bool hw_monitor_running;
-    std::shared_mutex m_hw_monitor_lock;
+    std::mutex m_hw_monitor_lock;
 
     // the actual temp and power data retrieved
     // by the public functions above
     std::vector<float> _avg_temps; // average temps per chip
     float              _avg_power; // average power consumption
+    float              _avg_pressure; // average pressure
 
     // the 'instantaneous' temps and power are just the newest values
     // in the deques
@@ -177,15 +190,17 @@ class DFPExecutor
     //--------------------------------------------------------------------------------
 
     // interval to poll temp and power
-    // default: 4 per second
-    std::chrono::milliseconds hw_monitor_interval = std::chrono::milliseconds(250);
+    const std::chrono::milliseconds hw_monitor_interval;
 
     // number of samples to average over
     // (time the avg is over is thus hw_monitor_interval * hw_monitor_avg_samples)
-    unsigned int hw_monitor_avg_samples = 12; // 3 seconds
+    const unsigned int hw_monitor_avg_samples = 8;
 
     // the complete window of powers so far
     std::deque<float> power_window;
+    
+    // the complete window of pressures so far
+    std::deque<float> pressure_window;
 
     // for temps, it's per interval * per chip
     std::vector<std::deque<float>> temp_window;
@@ -234,19 +249,14 @@ class ModelThreadPair
 
     // check out our synchronization mechanism here:
     // https://link.excalidraw.com/l/55syurcaaU1/A46Bz3AK1dp
-    std::condition_variable s_done;
     std::condition_variable s_loop_ready;
-    std::condition_variable s_enter_out;
-    std::condition_variable s_enter_in;
-    std::atomic_bool a_input_done;
-    bool enter_out_flag = false;
-    bool enter_in_flag = false;
-    int num_loop_ready = 0;
+    LockedVar<bool> a_input_done;
+    LockedVar<bool> enter_out_flag;
+    LockedVar<bool> enter_in_flag;
+    LockedVar<int> num_loop_ready;
 
     std::mutex m_flags;
     std::mutex m_ready;
-    std::mutex m_enter_in;
-    std::mutex m_enter_out;
 
     uint8_t driver_ctx_id;
 
@@ -259,7 +269,9 @@ class ModelThreadPair
     int model_id;
     uint64_t frame_limit;
     uint32_t time_limit;
-    bool stop_on_empty;
+
+    // disabled in SDK 2.1
+    const bool stop_on_empty = false;
 
 
     // targets of threads
@@ -269,20 +281,21 @@ class ModelThreadPair
     const DFPExecutor *my_dfpexec;
 
     // 3'b000=run, 3'b010=halt, 3'b011=force-halt, 3'b101=terminate
-    std::condition_variable s_stop;
     enum StopFlags : char {
         SF_RUN = 0,
         SF_HALT = 2,
         SF_FORCE_HALT = 3,
         SF_TERMINATE = 5
     };
-    std::atomic<StopFlags> a_stop_in;
-    std::atomic<StopFlags> a_stop_out;
+    LockedVar<StopFlags> a_stop_in;
+    LockedVar<StopFlags> a_stop_out;
 
     std::thread* ithread;
     std::thread* othread;
 
-    BQExtFlag<ContextClient*>* inflights;
+    // use the X version (the exclusive LockedVar instead of SharedLockedVar)
+    // since we will use a_input_done as the external flag
+    BQExtFlagX<ContextClient*>* inflights;
 
 };
 

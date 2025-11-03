@@ -154,9 +154,9 @@ class Connector
     {
         Protocol proto = detect_protocol(address);
         if (proto == Protocol::TCP) {
-            spdlog::info("[Connector<TCP>] Connecting to {}:{}", address, port);
+            spdlog::debug("[Connector<TCP>] Connecting to {}:{}", address, port);
             auto tcp_socket_ = new mxasio::ip::tcp::socket(io_context_);
-            spdlog::info("[Connector<TCP>] TCP socket created");
+            spdlog::debug("[Connector<TCP>] TCP socket created");
             mxasio::ip::tcp::resolver resolver(io_context_);
             mxasio::ip::tcp::resolver::results_type endpoints = resolver.resolve(address, std::to_string(port));
             if(endpoints.empty()) {
@@ -175,10 +175,10 @@ class Connector
 
             tcp_socket_->connect( mxasio::ip::tcp::endpoint(mxasio::ip::make_address(ipv4_address), port) );
 
-            spdlog::info("[Connector<TCP>] TCP socket connected");
+            spdlog::debug("[Connector<TCP>] TCP socket connected");
             tcp_socket_->set_option(mxasio::ip::tcp::no_delay(true));
             tcp_socket_->set_option(mxasio::socket_base::keep_alive(true));
-            spdlog::info("[Connector<TCP>] TCP socket options set");
+            spdlog::debug("[Connector<TCP>] TCP socket options set");
             return new Socket(tcp_socket_, nullptr, true);
         }
         else {
@@ -210,12 +210,12 @@ class Listener
             uds_acceptor_ = nullptr;
             try {
                 auto ip_addr = mxasio::ip::make_address(addr_);
-                spdlog::info("[Listener] parsed IP address: {}", ip_addr.to_string());
+                spdlog::debug("[Listener] parsed IP address: {}", ip_addr.to_string());
                 tcp_acceptor_ = new mxasio::ip::tcp::acceptor(
                     io_context_,
                     mxasio::ip::tcp::endpoint(ip_addr, port_)
                 );
-                spdlog::info("[Listener] TCP acceptor listening on {}:{}", addr_, port_);
+                spdlog::debug("[Listener] TCP acceptor listening on {}:{}", addr_, port_);
             }
             catch (const std::exception &e) {
                 spdlog::error("[Listener] failed to bind TCP {}:{} -> {}", addr_, port_, e.what());
