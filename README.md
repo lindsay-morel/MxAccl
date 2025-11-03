@@ -6,7 +6,7 @@
 
 
 <!-- Badges for quick project insights -->
-[![MemryX SDK](https://img.shields.io/badge/MemryX%20SDK-2.0-brightgreen)](https://developer.memryx.com)
+[![MemryX SDK](https://img.shields.io/badge/MemryX%20SDK-2.1-brightgreen)](https://developer.memryx.com)
 [![C++](https://img.shields.io/badge/C++-17-blue)](https://en.cppreference.com)
 
 
@@ -114,7 +114,7 @@ acclBench -d mobilenet.dfp -f 1000
 For Onnx, Tensorflow, and TFLite pre/post plugins, refer to the [MxUtils](https://github.com/memryx/MxUtils) repository. These plugins are packaged separately to minimize dependencies for the core MxAccl library and are only required if pre/post models are used.
 
 ## License
-MxAccl is free and open-source software under the [MPL-2.0 License](LICENSE-MPL-2.0).
+MxAccl is Free and open-source software under the [MPL-2.0 License](LICENSE-MPL-2.0).
 
 
 ## See Also
