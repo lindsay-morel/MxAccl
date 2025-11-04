@@ -116,6 +116,9 @@ For Onnx, Tensorflow, and TFLite pre/post plugins, refer to the [MxUtils](https:
 ## License
 MxAccl is Free and open-source software under the [MPL-2.0 License](LICENSE-MPL-2.0).
 
+#### Third-Party
+See the LICENSE.md files within each `extern/` for [asio](https://think-async.com/Asio/), [cpuinfo](https://github.com/pytorch/cpuinfo), [pybind11](https://github.com/pybind/pybind11), and [spdlog](https://github.com/gabime/spdlog) licenses, all permissive open-source.
+
 
 ## See Also
 Enhance your experience with MemryX solutions by exploring the following resources:
