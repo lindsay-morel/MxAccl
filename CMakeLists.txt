@@ -1,10 +1,17 @@
 cmake_minimum_required(VERSION 3.13)
 
-project(MX_API)
+# don't use the default flags -- we know better
+set(CMAKE_C_FLAGS_DEBUG "" CACHE STRING "")
+set(CMAKE_CXX_FLAGS_DEBUG "" CACHE STRING "")
+set(CMAKE_C_FLAGS_RELEASE "" CACHE STRING "")
+set(CMAKE_CXX_FLAGS_RELEASE "" CACHE STRING "")
+
+project(MX_API LANGUAGES C CXX)
 
 set(CMAKE_VERBOSE_MAKEFILE ON)
 
 set(CMAKE_CXX_STANDARD 17)
+
 
 option(NO_AVX "Disable AVX/AVX2 options for x86 builds" OFF)
 
