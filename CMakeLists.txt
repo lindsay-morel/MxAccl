@@ -71,11 +71,11 @@ else()
   elseif (CMAKE_SYSTEM_PROCESSOR MATCHES "(aarch64)|(AARCH64)|(arm64)|(ARM64)")
     set(
       CMAKE_C_FLAGS
-      "${CMAKE_C_FLAGS} ${CMAKE_COMMON_CFLAGS} -march=armv8-a+simd -mtune=cortex-a76"
+      "${CMAKE_C_FLAGS} ${CMAKE_COMMON_CFLAGS} " #-march=armv8-a+simd -mtune=cortex-a76"
     )
     set(
       CMAKE_CXX_FLAGS
-      "${CMAKE_CXX_FLAGS} ${CMAKE_COMMON_CFLAGS} -march=armv8-a+simd -mtune=cortex-a76"
+      "${CMAKE_CXX_FLAGS} ${CMAKE_COMMON_CFLAGS} " # -march=armv8-a+simd -mtune=cortex-a76"
     )
   elseif (CMAKE_SYSTEM_PROCESSOR MATCHES "(riscv64)|(RISCV64)|(RV64)|(rv64gc)")
     set(
