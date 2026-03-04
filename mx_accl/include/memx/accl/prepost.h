@@ -16,7 +16,7 @@
 #include <memx/memx.h>
 
 #include <memx/accl/utils/featureMap.h>
-// #include <memx/accl/utils/path.h>
+#include <memx/accl/utils/path.h>
 
 enum MEMX_API_EXPORT PluginType {
     Plugin_Onnx,
